@@ -1,0 +1,38 @@
+services:
+  ollama:
+    image: ollama/ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+
+  adam:
+    build: .
+    depends_on:
+      - ollama
+    env_file:
+      - .env
+    environment:
+      - ADAM_OLLAMA_HOST=ollama:11434
+    volumes:
+      - ./core:/app/core:ro
+      - ./prompts:/app/prompts
+      - ./tools:/app/tools
+      - ./strategies:/app/strategies
+      - ./memory:/app/memory
+      - ./knowledge:/app/knowledge
+      - ./checkpoints:/app/checkpoints
+      - ./defaults:/app/defaults:ro
+      - ./curator:/app/curator
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
