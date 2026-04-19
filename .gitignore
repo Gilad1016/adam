@@ -8,3 +8,6 @@ memory/budget.toon
 memory/goals.toon
 knowledge/*.toon
 curator/curator.log
+sandbox/
+memory/schedule.json
+memory/speciation.json

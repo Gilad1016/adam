@@ -4,6 +4,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     cron \
     curl \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -17,7 +19,8 @@ COPY tools/ /app/tools/
 COPY defaults/ /app/defaults/
 COPY curator/ /app/curator/
 
-RUN mkdir -p /app/memory /app/knowledge /app/checkpoints /app/strategies
+RUN mkdir -p /app/memory /app/knowledge /app/checkpoints /app/strategies \
+    /app/sandbox/projects /app/sandbox/services /app/sandbox/scripts
 
 RUN touch /app/memory/experiences.toon \
     && touch /app/memory/self_model.toon \

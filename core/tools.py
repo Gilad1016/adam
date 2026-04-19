@@ -4,7 +4,7 @@ import importlib.util
 import os
 import subprocess
 
-from core import toon, email_client, checkpoint
+from core import toon, email_client, checkpoint, sandbox, scheduler
 
 
 TOOLS_DIR = "/app/tools"
@@ -49,6 +49,46 @@ BUILTIN_TOOLS = {
     "web_read": {
         "description": "Fetch and read a web page as text. Args: {url: string}",
         "execute": lambda args: _web_read(args["url"]),
+    },
+    "sandbox_run": {
+        "description": "Write and execute code in your sandbox. Args: {name: string, code: string, language: 'python'|'bash'|'node'}",
+        "execute": lambda args: sandbox.run_script(args["name"], args["code"], args.get("language", "python")),
+    },
+    "sandbox_service_start": {
+        "description": "Start a long-running service/daemon in sandbox. Args: {name: string, command: string}",
+        "execute": lambda args: sandbox.start_service(args["name"], args["command"]),
+    },
+    "sandbox_service_stop": {
+        "description": "Stop a running sandbox service. Args: {name: string}",
+        "execute": lambda args: sandbox.stop_service(args["name"]),
+    },
+    "sandbox_services": {
+        "description": "List all sandbox services and their status. Args: {}",
+        "execute": lambda args: sandbox.list_services(),
+    },
+    "sandbox_log": {
+        "description": "Read a service's log output. Args: {name: string, tail: number (optional, default 50)}",
+        "execute": lambda args: sandbox.read_service_log(args["name"], args.get("tail", 50)),
+    },
+    "sandbox_install": {
+        "description": "Install a pip package. Args: {package: string}",
+        "execute": lambda args: sandbox.install_package(args["package"]),
+    },
+    "sandbox_project": {
+        "description": "Create a multi-file project in sandbox. Args: {name: string, files: {filename: content, ...}}",
+        "execute": lambda args: sandbox.create_project(args["name"], args["files"]),
+    },
+    "schedule_add": {
+        "description": "Create a recurring routine. Args: {name: string, description: string, interval_minutes: number}",
+        "execute": lambda args: scheduler.add_routine(args["name"], args["description"], args["interval_minutes"]),
+    },
+    "schedule_remove": {
+        "description": "Remove a scheduled routine. Args: {name: string}",
+        "execute": lambda args: scheduler.remove_routine(args["name"]),
+    },
+    "schedule_list": {
+        "description": "List all scheduled routines. Args: {}",
+        "execute": lambda args: scheduler.list_routines(),
     },
 }
 

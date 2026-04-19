@@ -32,7 +32,9 @@ services:
       - ./checkpoints:/app/checkpoints
       - ./defaults:/app/defaults:ro
       - ./curator:/app/curator
+      - adam_sandbox:/app/sandbox
     restart: unless-stopped
 
 volumes:
   ollama_data:
+  adam_sandbox:
