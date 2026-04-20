@@ -4,7 +4,7 @@ import importlib.util
 import os
 import subprocess
 
-from core import toon, email_client, checkpoint, sandbox, scheduler
+from core import toon, email_client, checkpoint, sandbox, scheduler, interrupts
 
 
 TOOLS_DIR = "/app/tools"
@@ -27,8 +27,20 @@ BUILTIN_TOOLS = {
         "execute": lambda args: str(email_client.send_email(args["subject"], args["body"])),
     },
     "wait": {
-        "description": "Rest for N minutes to conserve electricity. Args: {minutes: number}",
+        "description": "Rest for N minutes to conserve electricity. Wakes up early if owner emails or alarms trigger. Args: {minutes: number}",
         "execute": lambda args: _wait(args["minutes"]),
+    },
+    "set_alarm": {
+        "description": "Set an alarm that will interrupt you. Args: {name: string, message: string, minutes_from_now: number, recurring_minutes: number (optional)}",
+        "execute": lambda args: interrupts.add_alarm(args["name"], args["message"], args["minutes_from_now"], args.get("recurring_minutes")),
+    },
+    "remove_alarm": {
+        "description": "Remove a scheduled alarm. Args: {name: string}",
+        "execute": lambda args: interrupts.remove_alarm(args["name"]),
+    },
+    "list_alarms": {
+        "description": "List all active alarms. Args: {}",
+        "execute": lambda args: interrupts.list_alarms(),
     },
     "write_knowledge": {
         "description": "Save knowledge to shared knowledge base. Args: {topic: string, content: string}",
@@ -182,7 +194,14 @@ def _write_file(path: str, content: str) -> str:
 def _wait(minutes: int) -> str:
     import time
     minutes = max(1, min(minutes, 60))
-    time.sleep(minutes * 60)
+    total_seconds = minutes * 60
+    check_interval = 15
+    elapsed = 0
+    while elapsed < total_seconds:
+        time.sleep(check_interval)
+        elapsed += check_interval
+        if interrupts.has_pending_interrupts():
+            return f"woke up after {elapsed // 60}m — interrupt detected"
     return f"rested for {minutes} minutes"
 
 

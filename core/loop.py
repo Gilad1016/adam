@@ -5,7 +5,7 @@ import os
 import time
 import traceback
 
-from core import llm, email_client, safety, checkpoint, toon, tools, scheduler, speciation
+from core import llm, email_client, safety, checkpoint, toon, tools, scheduler, speciation, interrupts
 
 
 SPECIATION_INTERVAL = 50
@@ -16,6 +16,7 @@ def run():
     checkpoint.init_git()
     safety.init_budget()
     scheduler.init()
+    interrupts.init()
     llm.ensure_model()
 
     last_checkpoint_time = time.time()
@@ -45,8 +46,18 @@ def run():
 
 
 def _iterate(iteration: int):
-    # 1. CHECK EMAIL
-    owner_messages = _check_owner_email()
+    # 1. CHECK INTERRUPTS (owner emails, alarms, system alerts)
+    active_interrupts = interrupts.check_all()
+    if active_interrupts:
+        print(f"[INTERRUPT] {len(active_interrupts)} interrupt(s): {[i['type'] for i in active_interrupts]}")
+
+    # Handle owner email commands (goal updates, budget top-ups)
+    owner_messages = []
+    for intr in active_interrupts:
+        if intr["type"] == "owner_email":
+            msg = intr["data"]
+            _handle_owner_command(msg)
+            owner_messages.append(msg)
 
     # 2. CHECK SCHEDULED ROUTINES
     due_routines = scheduler.get_due_routines()
@@ -61,7 +72,7 @@ def _iterate(iteration: int):
             print(f"[SPECIATION] {len(skill_proposals)} new pattern(s) detected")
 
     # 4. LOAD CONTEXT
-    context = _build_context(iteration, owner_messages, due_routines, skill_proposals)
+    context = _build_context(iteration, active_interrupts, due_routines, skill_proposals)
     system_prompt = _load_system_prompt()
 
     # 5. THINK
@@ -95,16 +106,6 @@ def _iterate(iteration: int):
         time.sleep(5)
 
 
-def _check_owner_email() -> list[dict]:
-    messages = email_client.check_inbox()
-    owner_msgs = [m for m in messages if m.get("is_owner")]
-    if owner_msgs:
-        print(f"[EMAIL] {len(owner_msgs)} message(s) from owner")
-        for msg in owner_msgs:
-            _handle_owner_command(msg)
-    return owner_msgs
-
-
 def _handle_owner_command(msg: dict):
     subject = msg.get("subject", "")
     body = msg.get("body", "")
@@ -129,17 +130,22 @@ def _handle_owner_command(msg: dict):
             print(f"[BUDGET] Invalid amount in subject: {subject}")
 
 
-def _build_context(iteration: int, owner_messages: list[dict],
+def _build_context(iteration: int, active_interrupts: list[dict],
                    due_routines: list[dict], skill_proposals: list[dict]) -> str:
     parts = []
 
-    # Owner messages (highest priority)
-    if owner_messages:
-        parts.append("== OWNER MESSAGES (respond to these first) ==")
-        for msg in owner_messages:
-            parts.append(f"Subject: {msg['subject']}")
-            parts.append(f"Body: {msg['body']}")
-        parts.append("== END OWNER MESSAGES ==")
+    # Interrupts (highest priority — in your face)
+    if active_interrupts:
+        parts.append("!! INTERRUPTS — ADDRESS THESE FIRST !!")
+        for intr in active_interrupts:
+            if intr["type"] == "owner_email":
+                msg = intr["data"]
+                parts.append(f"[OWNER EMAIL] Subject: {msg['subject']}\nBody: {msg['body']}")
+            elif intr["type"] == "alarm":
+                parts.append(f"[ALARM: {intr['data']['name']}] {intr['data']['message']}")
+            elif intr["type"] == "system":
+                parts.append(f"[SYSTEM ALERT] {intr['data']['message']}")
+        parts.append("!! END INTERRUPTS !!")
 
     # Due routines
     if due_routines:
