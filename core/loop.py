@@ -100,7 +100,33 @@ def _check_owner_email() -> list[dict]:
     owner_msgs = [m for m in messages if m.get("is_owner")]
     if owner_msgs:
         print(f"[EMAIL] {len(owner_msgs)} message(s) from owner")
+        for msg in owner_msgs:
+            _handle_owner_command(msg)
     return owner_msgs
+
+
+def _handle_owner_command(msg: dict):
+    subject = msg.get("subject", "")
+    body = msg.get("body", "")
+
+    if subject.upper().startswith("GOAL:"):
+        goal_text = subject[5:].strip()
+        if body.strip():
+            goal_text += "\n" + body.strip()
+        goals_path = "/app/prompts/goals.md"
+        with open(goals_path, "w") as f:
+            f.write(f"# Current Goals\n\n{goal_text}\n")
+        print(f"[GOAL UPDATED] {goal_text[:100]}")
+
+    elif subject.upper().startswith("BUDGET:"):
+        try:
+            amount = float(subject[7:].strip())
+            budget = safety.load_budget()
+            budget["balance"] = round(budget["balance"] + amount, 4)
+            safety.save_budget(budget)
+            print(f"[BUDGET] Added ${amount:.2f}, new balance: ${budget['balance']:.2f}")
+        except ValueError:
+            print(f"[BUDGET] Invalid amount in subject: {subject}")
 
 
 def _build_context(iteration: int, owner_messages: list[dict],
