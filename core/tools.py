@@ -217,6 +217,10 @@ def _write_knowledge(topic: str, content: str) -> str:
 
 
 def _modify_prompt(content: str) -> str:
+    if not content or not content.strip():
+        return "[REJECTED: system prompt cannot be empty]"
+    if len(content.strip()) < 100:
+        return "[REJECTED: system prompt too short — must be at least 100 characters. You can modify it but not gut it.]"
     checkpoint.snapshot()
     with open("/app/prompts/system.md", "w") as f:
         f.write(content)
