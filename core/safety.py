@@ -106,7 +106,26 @@ def handle_corruption(errors: list[str], checkpoint_fn) -> bool:
         return True
 
     restored = checkpoint_fn()
+    if not restored:
+        print("[NO CHECKPOINT AVAILABLE — restoring missing files from defaults]")
+        _restore_missing_from_defaults()
     return restored
+
+
+def _restore_missing_from_defaults():
+    for dirname in ["prompts", "tools"]:
+        src_dir = os.path.join(DEFAULTS_DIR, dirname)
+        dst_dir = os.path.join("/app", dirname)
+        if not os.path.exists(src_dir):
+            continue
+        os.makedirs(dst_dir, exist_ok=True)
+        for filename in os.listdir(src_dir):
+            src_file = os.path.join(src_dir, filename)
+            dst_file = os.path.join(dst_dir, filename)
+            if not os.path.exists(dst_file) or os.path.getsize(dst_file) == 0:
+                if os.path.isfile(src_file):
+                    shutil.copy2(src_file, dst_file)
+                    print(f"[RESTORED] {dirname}/{filename} from defaults")
 
 
 def clear_corruption_counter():

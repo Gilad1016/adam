@@ -13,26 +13,23 @@ MAX_CHECKPOINTS = 10
 
 def init_git():
     app_dir = "/app"
-    if not os.path.exists(os.path.join(app_dir, ".git")):
-        subprocess.run(["git", "init"], cwd=app_dir, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "adam@local"], cwd=app_dir, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "ADAM"], cwd=app_dir, capture_output=True)
-    remote_url = os.environ.get("GIT_REMOTE_URL")
-    if remote_url:
-        subprocess.run(["git", "remote", "remove", "origin"], cwd=app_dir,
-                        capture_output=True)
-        subprocess.run(["git", "remote", "add", "origin", remote_url], cwd=app_dir,
-                        capture_output=True)
-        # Copy host git credentials if available
-        host_git = "/app/.host-git/config"
-        if os.path.exists(host_git):
-            result = subprocess.run(["git", "config", "--file", host_git,
-                                     "--get", "credential.helper"],
-                                    capture_output=True, text=True)
-            if result.stdout.strip():
-                subprocess.run(["git", "config", "credential.helper",
-                                result.stdout.strip()], cwd=app_dir, capture_output=True)
-    _git_commit("initial state")
+    try:
+        if not os.path.exists(os.path.join(app_dir, ".git")):
+            subprocess.run(["git", "init"], cwd=app_dir, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "adam@local"], cwd=app_dir, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "ADAM"], cwd=app_dir, capture_output=True)
+        remote_url = os.environ.get("GIT_REMOTE_URL")
+        if remote_url:
+            subprocess.run(["git", "remote", "remove", "origin"], cwd=app_dir,
+                            capture_output=True)
+            subprocess.run(["git", "remote", "add", "origin", remote_url], cwd=app_dir,
+                            capture_output=True)
+        _git_commit("initial state")
+        # Take an immediate snapshot so there's always a checkpoint to restore from
+        snapshot()
+        print("[CHECKPOINT] Initial snapshot created")
+    except Exception as e:
+        print(f"[CHECKPOINT] Git init warning (non-fatal): {e}")
 
 
 def snapshot() -> str:
