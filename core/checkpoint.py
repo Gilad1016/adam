@@ -9,6 +9,7 @@ import time
 CHECKPOINT_DIR = "/app/checkpoints"
 MUTABLE_PATHS = ["/app/prompts", "/app/tools", "/app/strategies"]
 MAX_CHECKPOINTS = 10
+REQUIRED_PROMPT_FILES = ["/app/prompts/system.md", "/app/prompts/goals.md"]
 
 
 def init_git():
@@ -26,8 +27,11 @@ def init_git():
                             capture_output=True)
         _git_commit("initial state")
         # Take an immediate snapshot so there's always a checkpoint to restore from
-        snapshot()
-        print("[CHECKPOINT] Initial snapshot created")
+        if _is_bootstrap_state_valid():
+            snapshot()
+            print("[CHECKPOINT] Initial snapshot created")
+        else:
+            print("[CHECKPOINT] Initial snapshot skipped (required prompt files missing/empty)")
     except Exception as e:
         print(f"[CHECKPOINT] Git init warning (non-fatal): {e}")
 
@@ -59,8 +63,8 @@ def restore_latest() -> bool:
         dirname = os.path.basename(path)
         src = os.path.join(snap_dir, dirname)
         if os.path.exists(src):
-            shutil.rmtree(path, ignore_errors=True)
-            shutil.copytree(src, path)
+            _clear_path(path)
+            shutil.copytree(src, path, dirs_exist_ok=True)
 
     _git_commit(f"restored from {latest}")
     return True
@@ -90,3 +94,26 @@ def _git_commit(message: str):
     subprocess.run(["git", "add", "-A"], cwd=app_dir, capture_output=True)
     subprocess.run(["git", "commit", "-m", message, "--allow-empty"],
                    cwd=app_dir, capture_output=True)
+
+
+def _clear_path(path: str):
+    """Best-effort path clearing before checkpoint restore."""
+    if not os.path.lexists(path):
+        return
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path, ignore_errors=True)
+        return
+    try:
+        os.remove(path)
+    except OSError:
+        # If remove fails (permission race/lock), restore will merge with dirs_exist_ok=True.
+        pass
+
+
+def _is_bootstrap_state_valid() -> bool:
+    for path in REQUIRED_PROMPT_FILES:
+        if not os.path.exists(path):
+            return False
+        if os.path.getsize(path) == 0:
+            return False
+    return True
