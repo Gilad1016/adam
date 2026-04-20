@@ -22,6 +22,7 @@ services:
       - .env
     environment:
       - ADAM_OLLAMA_HOST=ollama:11434
+      - GIT_REMOTE_URL=https://github.com/Gilad1016/adam.git
     volumes:
       - ./core:/app/core:ro
       - ./prompts:/app/prompts
@@ -33,6 +34,7 @@ services:
       - ./defaults:/app/defaults:ro
       - ./curator:/app/curator
       - adam_sandbox:/app/sandbox
+      - ./.git:/app/.host-git:ro
     restart: unless-stopped
 
 volumes:

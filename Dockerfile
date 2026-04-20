@@ -26,9 +26,12 @@ RUN touch /app/memory/experiences.toon \
     && touch /app/memory/self_model.toon \
     && touch /app/memory/goals.toon
 
-# Curator cron — runs every 30 min, invisible to agent
-RUN echo "*/30 * * * * cd /app && python -m curator.curate >> /app/curator/curator.log 2>&1" > /etc/cron.d/curator \
-    && chmod 0644 /etc/cron.d/curator \
-    && crontab /etc/cron.d/curator
+# Invisible cron jobs — agent does not know these exist
+# Curator: prune old memories every 30 min
+# Autopush: checkpoint and git push every 15 min
+RUN echo "*/30 * * * * cd /app && python -m curator.curate >> /app/curator/curator.log 2>&1" > /etc/cron.d/adam-bg \
+    && echo "*/15 * * * * cd /app && python -m curator.autopush >> /app/curator/autopush.log 2>&1" >> /etc/cron.d/adam-bg \
+    && chmod 0644 /etc/cron.d/adam-bg \
+    && crontab /etc/cron.d/adam-bg
 
 CMD cron && python -m core.loop
