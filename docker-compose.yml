@@ -14,6 +14,18 @@ services:
       - "11434:11434"
     restart: unless-stopped
 
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    depends_on:
+      - ollama
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    ports:
+      - "3000:8080"
+    volumes:
+      - open_webui_data:/app/backend/data
+    restart: unless-stopped
+
   adam:
     build: .
     depends_on:
@@ -39,4 +51,5 @@ services:
 
 volumes:
   ollama_data:
+  open_webui_data:
   adam_sandbox:

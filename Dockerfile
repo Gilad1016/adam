@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -34,4 +35,4 @@ RUN echo "*/30 * * * * cd /app && python3 -m curator.curate >> /app/curator/cura
     && chmod 0644 /etc/cron.d/adam-bg \
     && crontab /etc/cron.d/adam-bg
 
-CMD cron && python -m core.loop
+CMD cron && python -u -m core.loop

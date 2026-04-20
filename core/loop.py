@@ -4,19 +4,53 @@ import json
 import os
 import time
 import traceback
+import threading
 
 from core import llm, email_client, safety, checkpoint, toon, tools, scheduler, speciation, interrupts, compaction
 
 
 SPECIATION_INTERVAL = 50
+HEARTBEAT_INTERVAL_SEC = 30
+
+_runtime_state = {
+    "stage": "init",
+    "iteration": 0,
+    "last_activity_ts": time.time(),
+}
+_runtime_state_lock = threading.Lock()
+
+
+def _set_stage(stage: str, iteration: int | None = None):
+    with _runtime_state_lock:
+        _runtime_state["stage"] = stage
+        if iteration is not None:
+            _runtime_state["iteration"] = iteration
+        _runtime_state["last_activity_ts"] = time.time()
+
+
+def _start_heartbeat_thread():
+    def _heartbeat():
+        while True:
+            time.sleep(HEARTBEAT_INTERVAL_SEC)
+            with _runtime_state_lock:
+                stage = _runtime_state["stage"]
+                iteration = _runtime_state["iteration"]
+                idle_for = int(time.time() - _runtime_state["last_activity_ts"])
+            print(f"[HEARTBEAT] alive iteration={iteration} stage={stage} last_activity={idle_for}s")
+
+    t = threading.Thread(target=_heartbeat, daemon=True, name="adam-heartbeat")
+    t.start()
 
 
 def run():
     print("[ADAM] Initializing...")
+    _start_heartbeat_thread()
+    _set_stage("initializing")
     checkpoint.init_git()
     safety.init_budget()
     scheduler.init()
     interrupts.init()
+    _set_stage("loading-model")
     llm.ensure_model()
 
     last_checkpoint_time = time.time()
@@ -27,6 +61,7 @@ def run():
     while True:
         iteration += 1
         try:
+            _set_stage("iterate", iteration)
             _iterate(iteration)
             safety.clear_corruption_counter()
         except Exception as e:
@@ -34,19 +69,25 @@ def run():
             traceback.print_exc()
             time.sleep(10)
 
+        _set_stage("validating-state", iteration)
         errors = safety.validate_mutable_state()
         if errors:
             safety.handle_corruption(errors, checkpoint.restore_latest)
 
+        _set_stage("checkpoint-check", iteration)
         if checkpoint.should_checkpoint(last_checkpoint_time):
             checkpoint.snapshot()
             last_checkpoint_time = time.time()
 
+        _set_stage("deduct-electricity", iteration)
         safety.deduct_electricity()
 
 
 def _iterate(iteration: int):
+    iter_start = time.time()
+
     # 1. CHECK INTERRUPTS (owner emails, alarms, system alerts)
+    _set_stage("checking-interrupts", iteration)
     active_interrupts = interrupts.check_all()
     if active_interrupts:
         print(f"[INTERRUPT] {len(active_interrupts)} interrupt(s): {[i['type'] for i in active_interrupts]}")
@@ -60,11 +101,13 @@ def _iterate(iteration: int):
             owner_messages.append(msg)
 
     # 2. CHECK SCHEDULED ROUTINES
+    _set_stage("checking-routines", iteration)
     due_routines = scheduler.get_due_routines()
     if due_routines:
         print(f"[ROUTINES] {len(due_routines)} due: {[r['name'] for r in due_routines]}")
 
     # 3. CONTEXT COMPACTION (every N iterations)
+    _set_stage("compaction-check", iteration)
     if compaction.should_compact(iteration):
         try:
             compaction.compact()
@@ -72,6 +115,7 @@ def _iterate(iteration: int):
             print(f"[COMPACTION] Error: {e}")
 
     # 4. CHECK SKILL SPECIATION (every N iterations)
+    _set_stage("speciation-check", iteration)
     skill_proposals = []
     if iteration % SPECIATION_INTERVAL == 0:
         skill_proposals = speciation.analyze()
@@ -79,14 +123,21 @@ def _iterate(iteration: int):
             print(f"[SPECIATION] {len(skill_proposals)} new pattern(s) detected")
 
     # 4. LOAD CONTEXT
+    _set_stage("building-context", iteration)
     context = _build_context(iteration, active_interrupts, due_routines, skill_proposals)
     system_prompt = _load_system_prompt()
 
     # 5. THINK
+    _set_stage("thinking", iteration)
+    think_start = time.time()
+    print(f"[THINK] starting iteration={iteration}")
     thought = llm.think(system_prompt, context, tools.get_tools_for_llm())
+    think_sec = time.time() - think_start
+    print(f"[THINK] completed iteration={iteration} duration={think_sec:.1f}s")
     print(f"[THOUGHT #{iteration}] {thought['content'][:200]}")
 
     # 6. EXECUTE
+    _set_stage("executing-tools", iteration)
     tool_results = []
     for tc in thought.get("tool_calls", []):
         func = tc.get("function", {})
@@ -102,15 +153,22 @@ def _iterate(iteration: int):
         print(f"[ACTION] {name} -> {result[:200]}")
 
     # 7. LOG
+    _set_stage("logging-thought", iteration)
     _log_thought(iteration, thought, tool_results)
 
     # 8. MEMORY NUDGE — after meaningful work, prompt for knowledge persistence
+    _set_stage("memory-nudge", iteration)
     if tool_results:
         _memory_nudge(thought, tool_results)
 
     # 9. If idle, brief pause
     if not thought.get("tool_calls") and not thought.get("content", "").strip():
+        _set_stage("idle-sleep", iteration)
+        print("[IDLE] no thought content or tool calls; sleeping 5s")
         time.sleep(5)
+
+    iter_sec = time.time() - iter_start
+    print(f"[LOOP] iteration={iteration} complete duration={iter_sec:.1f}s tools={len(tool_results)}")
 
 
 def _handle_owner_command(msg: dict):
