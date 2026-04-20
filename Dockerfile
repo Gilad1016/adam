@@ -29,8 +29,8 @@ RUN touch /app/memory/experiences.toon \
 # Invisible cron jobs — agent does not know these exist
 # Curator: prune old memories every 30 min
 # Autopush: checkpoint and git push every 15 min
-RUN echo "*/30 * * * * cd /app && python -m curator.curate >> /app/curator/curator.log 2>&1" > /etc/cron.d/adam-bg \
-    && echo "*/15 * * * * cd /app && python -m curator.autopush >> /app/curator/autopush.log 2>&1" >> /etc/cron.d/adam-bg \
+RUN echo "*/30 * * * * cd /app && python3 -m curator.curate >> /app/curator/curator.log 2>&1" > /etc/cron.d/adam-bg \
+    && echo "*/15 * * * * cd /app && python3 -m curator.autopush >> /app/curator/autopush.log 2>&1" >> /etc/cron.d/adam-bg \
     && chmod 0644 /etc/cron.d/adam-bg \
     && crontab /etc/cron.d/adam-bg
 
