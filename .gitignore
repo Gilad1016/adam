@@ -12,3 +12,4 @@ sandbox/
 memory/schedule.json
 memory/speciation.json
 memory/alarms.json
+prompts/goals.md
