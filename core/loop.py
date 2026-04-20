@@ -5,7 +5,7 @@ import os
 import time
 import traceback
 
-from core import llm, email_client, safety, checkpoint, toon, tools, scheduler, speciation, interrupts
+from core import llm, email_client, safety, checkpoint, toon, tools, scheduler, speciation, interrupts, compaction
 
 
 SPECIATION_INTERVAL = 50
@@ -64,7 +64,14 @@ def _iterate(iteration: int):
     if due_routines:
         print(f"[ROUTINES] {len(due_routines)} due: {[r['name'] for r in due_routines]}")
 
-    # 3. CHECK SKILL SPECIATION (every N iterations)
+    # 3. CONTEXT COMPACTION (every N iterations)
+    if compaction.should_compact(iteration):
+        try:
+            compaction.compact()
+        except Exception as e:
+            print(f"[COMPACTION] Error: {e}")
+
+    # 4. CHECK SKILL SPECIATION (every N iterations)
     skill_proposals = []
     if iteration % SPECIATION_INTERVAL == 0:
         skill_proposals = speciation.analyze()
@@ -175,6 +182,11 @@ def _build_context(iteration: int, active_interrupts: list[dict],
     if safety.is_budget_visible():
         budget = safety.load_budget()
         parts.append(f"== BALANCE == ${budget.get('balance', 0):.2f} (spent: ${budget.get('total_spent', 0):.2f}, iterations: {budget.get('iteration_count', 0)})")
+
+    # Long-term summary (compacted old thoughts)
+    summary = compaction.load_summary()
+    if summary:
+        parts.append(f"== LONG-TERM MEMORY ==\n{summary}\n== END LONG-TERM ==")
 
     # Recent thoughts (last 10)
     parts.append(f"== ITERATION {iteration} ==")
