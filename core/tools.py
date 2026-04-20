@@ -4,7 +4,7 @@ import importlib.util
 import os
 import subprocess
 
-from core import toon, email_client, checkpoint, sandbox, scheduler, interrupts, llm
+from core import toon, email_client, checkpoint, sandbox, scheduler, interrupts, llm, knowledge
 
 
 TOOLS_DIR = "/app/tools"
@@ -43,8 +43,24 @@ BUILTIN_TOOLS = {
         "execute": lambda args: interrupts.list_alarms(),
     },
     "write_knowledge": {
-        "description": "Save knowledge to shared knowledge base. Args: {topic: string, content: string}",
-        "execute": lambda args: _write_knowledge(args["topic"], args["content"]),
+        "description": "Save a new piece of knowledge. Args: {topic: string, content: string, tags: [string] (optional)}",
+        "execute": lambda args: knowledge.write(args["topic"], args["content"], args.get("tags")),
+    },
+    "read_knowledge": {
+        "description": "Read a specific knowledge entry by its ID. Args: {entry_id: string}",
+        "execute": lambda args: knowledge.read(args["entry_id"]),
+    },
+    "search_knowledge": {
+        "description": "Search your knowledge base by keyword. Args: {query: string}",
+        "execute": lambda args: knowledge.search(args["query"]),
+    },
+    "list_knowledge": {
+        "description": "List all knowledge entries grouped by tag. Args: {}",
+        "execute": lambda args: knowledge.list_topics(),
+    },
+    "update_knowledge": {
+        "description": "Update an existing knowledge entry. Args: {entry_id: string, content: string}",
+        "execute": lambda args: knowledge.update(args["entry_id"], args["content"]),
     },
     "modify_prompt": {
         "description": "Modify your own system prompt. Triggers checkpoint first. Args: {content: string}",
