@@ -11,6 +11,7 @@ from core import llm, email_client, safety, checkpoint, toon, tools, scheduler, 
 
 SPECIATION_INTERVAL = 50
 HEARTBEAT_INTERVAL_SEC = 30
+_last_thought_cost = 0.004
 
 _runtime_state = {
     "stage": "init",
@@ -50,8 +51,9 @@ def run():
     safety.init_budget()
     scheduler.init()
     interrupts.init()
-    _set_stage("loading-model")
-    llm.ensure_model()
+    _set_stage("loading-models")
+    model_status = llm.ensure_models()
+    print(f"[ADAM] Models: {model_status}")
 
     last_checkpoint_time = time.time()
     iteration = 0
@@ -80,10 +82,11 @@ def run():
             last_checkpoint_time = time.time()
 
         _set_stage("deduct-electricity", iteration)
-        safety.deduct_electricity()
+        safety.deduct_electricity(_last_thought_cost)
 
 
 def _iterate(iteration: int):
+    global _last_thought_cost
     iter_start = time.time()
 
     # 1. CHECK INTERRUPTS (owner emails, alarms, system alerts)
@@ -122,21 +125,22 @@ def _iterate(iteration: int):
         if skill_proposals:
             print(f"[SPECIATION] {len(skill_proposals)} new pattern(s) detected")
 
-    # 4. LOAD CONTEXT
+    # 5. LOAD CONTEXT
     _set_stage("building-context", iteration)
     context = _build_context(iteration, active_interrupts, due_routines, skill_proposals)
     system_prompt = _load_system_prompt()
 
-    # 5. THINK
+    # 6. DETERMINE TIER
+    tier = _select_tier(active_interrupts, due_routines)
+
+    # 7. THINK
     _set_stage("thinking", iteration)
     think_start = time.time()
-    print(f"[THINK] starting iteration={iteration}")
-    thought = llm.think(system_prompt, context, tools.get_tools_for_llm())
+    thought = llm.think(system_prompt, context, tools.get_tools_for_llm(), tier=tier)
     think_sec = time.time() - think_start
-    print(f"[THINK] completed iteration={iteration} duration={think_sec:.1f}s")
-    print(f"[THOUGHT #{iteration}] {thought['content'][:200]}")
+    print(f"[THOUGHT #{iteration}] [{tier} {think_sec:.1f}s] {thought['content'][:200]}")
 
-    # 6. EXECUTE
+    # 8. EXECUTE
     _set_stage("executing-tools", iteration)
     tool_results = []
     for tc in thought.get("tool_calls", []):
@@ -152,16 +156,19 @@ def _iterate(iteration: int):
         tool_results.append({"tool": name, "args": args, "result": result})
         print(f"[ACTION] {name} -> {result[:200]}")
 
-    # 7. LOG
+    # 9. TRACK COST
+    _last_thought_cost = thought.get("cost", 0.004)
+
+    # 10. LOG
     _set_stage("logging-thought", iteration)
     _log_thought(iteration, thought, tool_results)
 
-    # 8. MEMORY NUDGE — after meaningful work, prompt for knowledge persistence
+    # 11. MEMORY NUDGE
     _set_stage("memory-nudge", iteration)
     if tool_results:
         _memory_nudge(thought, tool_results)
 
-    # 9. If idle, brief pause
+    # 12. If idle, brief pause
     if not thought.get("tool_calls") and not thought.get("content", "").strip():
         _set_stage("idle-sleep", iteration)
         print("[IDLE] no thought content or tool calls; sleeping 5s")
@@ -169,6 +176,16 @@ def _iterate(iteration: int):
 
     iter_sec = time.time() - iter_start
     print(f"[LOOP] iteration={iteration} complete duration={iter_sec:.1f}s tools={len(tool_results)}")
+
+
+ESCALATION_TOOLS = {"modify_prompt", "create_tool", "send_email"}
+
+
+def _select_tier(active_interrupts: list[dict], due_routines: list[dict]) -> str:
+    has_owner_email = any(i["type"] == "owner_email" for i in active_interrupts)
+    if has_owner_email:
+        return "deep"
+    return "thinker"
 
 
 def _handle_owner_command(msg: dict):
@@ -267,7 +284,6 @@ def _build_context(iteration: int, active_interrupts: list[dict],
 
 
 def _memory_nudge(thought: dict, tool_results: list[dict]):
-    """After meaningful work, do a quick follow-up thought asking if anything is worth remembering."""
     has_significant_action = any(
         r["tool"] in ("web_search", "web_read", "sandbox_run", "shell", "send_email")
         for r in tool_results
@@ -337,6 +353,7 @@ def _log_thought(iteration: int, thought: dict, tool_results: list[dict]):
         "thought": thought.get("content", "")[:500],
         "actions": [{"tool": r["tool"], "result": r["result"][:200]} for r in tool_results],
         "tokens": thought.get("tokens", 0),
+        "tier": thought.get("tier", "thinker"),
     }
     path = "/app/memory/experiences.toon"
     with open(path, "a") as f:

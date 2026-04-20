@@ -31,11 +31,12 @@ def init_budget():
         f.write(toon.encode(budget))
 
 
-def deduct_electricity() -> float:
-    cost = float(os.environ.get("ADAM_BUDGET_ELECTRICITY_PER_ITERATION", "0.01"))
+def deduct_electricity(thought_cost: float = None) -> float:
+    if thought_cost is None:
+        thought_cost = float(os.environ.get("ADAM_BUDGET_ELECTRICITY_PER_ITERATION", "0.004"))
     budget = load_budget()
-    budget["balance"] = round(budget["balance"] - cost, 4)
-    budget["total_spent"] = round(budget["total_spent"] + cost, 4)
+    budget["balance"] = round(budget["balance"] - thought_cost, 4)
+    budget["total_spent"] = round(budget["total_spent"] + thought_cost, 4)
     budget["iteration_count"] = budget.get("iteration_count", 0) + 1
     budget["last_deduction"] = time.time()
     save_budget(budget)

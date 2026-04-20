@@ -1,15 +1,32 @@
-"""Ollama LLM client — each call is a thought."""
+"""Ollama LLM client — three-tier model system.
 
-import json
+Thinker: fast, cheap — routine reasoning and planning
+Actor: tool-calling specialist — reliable structured output
+Deep: powerful, expensive — complex reasoning, self-modification, owner emails
+"""
+
 import os
 import requests
 
 
 OLLAMA_HOST = os.environ.get("ADAM_OLLAMA_HOST", "localhost:11434")
-OLLAMA_MODEL = os.environ.get("ADAM_OLLAMA_MODEL", "gemma3:12b")
+
+MODELS = {
+    "thinker": os.environ.get("ADAM_MODEL_THINKER", "gemma4:e4b"),
+    "actor": os.environ.get("ADAM_MODEL_ACTOR", "hermes3:8b"),
+    "deep": os.environ.get("ADAM_MODEL_DEEP", "gemma3:12b"),
+}
+
+COSTS = {
+    "thinker": float(os.environ.get("ADAM_COST_THINKER", "0.004")),
+    "actor": float(os.environ.get("ADAM_COST_ACTOR", "0.008")),
+    "deep": float(os.environ.get("ADAM_COST_DEEP", "0.012")),
+}
 
 
-def think(system_prompt: str, context: str, tools: list[dict] | None = None) -> dict:
+def think(system_prompt: str, context: str, tools: list[dict] | None = None,
+          tier: str = "thinker") -> dict:
+    model = MODELS.get(tier, MODELS["thinker"])
     url = f"http://{OLLAMA_HOST}/api/chat"
 
     messages = [
@@ -18,7 +35,7 @@ def think(system_prompt: str, context: str, tools: list[dict] | None = None) -> 
     ]
 
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": model,
         "messages": messages,
         "stream": False,
         "options": {
@@ -39,6 +56,8 @@ def think(system_prompt: str, context: str, tools: list[dict] | None = None) -> 
             "content": f"[THOUGHT FAILED: {e}]",
             "tool_calls": [],
             "tokens": 0,
+            "tier": tier,
+            "cost": 0,
         }
 
     message = data.get("message", {})
@@ -46,6 +65,8 @@ def think(system_prompt: str, context: str, tools: list[dict] | None = None) -> 
         "content": message.get("content", ""),
         "tool_calls": message.get("tool_calls", []),
         "tokens": data.get("eval_count", 0) + data.get("prompt_eval_count", 0),
+        "tier": tier,
+        "cost": COSTS.get(tier, COSTS["thinker"]),
     }
 
 
@@ -57,16 +78,23 @@ def check_health() -> bool:
         return False
 
 
-def ensure_model() -> bool:
+def ensure_models() -> dict[str, bool]:
+    results = {}
+    for tier, model in MODELS.items():
+        results[tier] = _ensure_model(model)
+    return results
+
+
+def _ensure_model(model: str) -> bool:
     try:
         resp = requests.get(f"http://{OLLAMA_HOST}/api/tags", timeout=10)
         models = [m["name"] for m in resp.json().get("models", [])]
-        if any(OLLAMA_MODEL in m for m in models):
+        if any(model in m for m in models):
             return True
-        print(f"Pulling model {OLLAMA_MODEL}...")
+        print(f"Pulling model {model}...")
         resp = requests.post(
             f"http://{OLLAMA_HOST}/api/pull",
-            json={"name": OLLAMA_MODEL},
+            json={"name": model},
             timeout=600,
         )
         return resp.status_code == 200

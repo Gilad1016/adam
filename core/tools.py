@@ -4,7 +4,7 @@ import importlib.util
 import os
 import subprocess
 
-from core import toon, email_client, checkpoint, sandbox, scheduler, interrupts
+from core import toon, email_client, checkpoint, sandbox, scheduler, interrupts, llm
 
 
 TOOLS_DIR = "/app/tools"
@@ -97,6 +97,10 @@ BUILTIN_TOOLS = {
     "schedule_remove": {
         "description": "Remove a scheduled routine. Args: {name: string}",
         "execute": lambda args: scheduler.remove_routine(args["name"]),
+    },
+    "escalate": {
+        "description": "Re-think the current problem with the deep (most powerful) model. Costs 3x more electricity. Use only when stuck or for complex/important decisions. Args: {question: string}",
+        "execute": lambda args: _escalate(args["question"]),
     },
     "schedule_list": {
         "description": "List all scheduled routines. Args: {}",
@@ -288,3 +292,12 @@ def _web_read(url: str) -> str:
         return text
     except Exception as e:
         return f"[WEB READ ERROR: {e}]"
+
+
+def _escalate(question: str) -> str:
+    result = llm.think(
+        "You are ADAM's deep reasoning system. Think carefully and thoroughly about the question. Provide a clear, actionable answer.",
+        question,
+        tier="deep"
+    )
+    return result.get("content", "[ESCALATION FAILED]")
