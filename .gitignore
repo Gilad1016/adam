@@ -11,3 +11,4 @@ curator/curator.log
 sandbox/
 memory/schedule.json
 memory/speciation.json
+memory/alarms.json
