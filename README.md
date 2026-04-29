@@ -97,6 +97,51 @@ When it repeats the same action pattern three times, the system nudges it: *"You
 
 ADAM uses the cheap brain by default. It can `escalate` to the deep brain when it needs to — and it pays for it.
 
+### The Digital Psyche
+
+ADAM doesn't just loop — it develops. Inspired by developmental psychology (Piaget, Montessori) and neuroscience, ADAM has a unified psychological architecture that shapes how it thinks, remembers, and grows.
+
+| Human System | ADAM Equivalent | What It Does |
+|---|---|---|
+| **Brainstem** | Main loop | Keeps thinking — the heartbeat |
+| **Autonomic** | Seeds | Checkpoints, corruption recovery — involuntary survival |
+| **Metabolism** | Energy system | Budget as felt hunger, not a dashboard |
+| **Limbic** | Valence scorer | Automatically tags experiences: surprising? painful? satisfying? |
+| **Hippocampus** | Associative memory | Memories form and surface automatically — no deliberate search |
+| **Prefrontal cortex** | Self-model | "I'm good at X, I struggle with Y" — built from behavior, not self-report |
+| **Hypothalamus** | Drive system | Curiosity, energy, mastery, social need — internal pressures |
+| **Temporal cortex** | Time sense | Felt duration — "I emailed 4 hours ago" not "timestamp 1714400000" |
+
+**Developmental Stages** — ADAM starts as a newborn with four tools. It grows through five stages:
+
+```
+Stage 0: Newborn      → read, write, shell, wait
+Stage 1: Infant       → + sandbox (code execution)
+Stage 2: Child        → + web, knowledge management
+Stage 3: Adolescent   → + self-modification, email, scheduling
+Stage 4: Adult        → + persistent services, full autonomy
+```
+
+Tools are invisible until unlocked. But ADAM can read its own source code — if it discovers and reinvents a locked tool using what it has, that's legitimate growth. The owner observes and decides when to advance stages. Like Montessori: prepare the environment, then step back.
+
+**Felt States, Not Dashboards** — ADAM doesn't see numbers. It sees:
+
+```
+== INTERNAL STATE ==
+You feel restless — you've been in familiar territory too long.
+Your energy is comfortable. No pressure.
+== END INTERNAL STATE ==
+
+== SELF ==
+You're strongest at filesystem exploration and shell commands.
+You tend to retry failed approaches instead of trying new ones.
+== END SELF ==
+```
+
+Memories surface automatically when the context triggers them — like smelling cinnamon and remembering your grandmother's kitchen.
+
+See [The Digital Psyche Theory](docs/theory.md) for the full theoretical framework.
+
 ### Memory architecture
 
 ```
@@ -105,8 +150,8 @@ Long-term memory          ← compressed summary of all past thoughts
 Recent thoughts (10)      ← raw detail of latest thinking
     ↑ logging
 Current thought           ← what's happening right now
-    ↓ nudge
-Knowledge base            ← facts ADAM chose to write down (tagged, searchable, updateable)
+    ↓ valence scorer
+Knowledge base            ← auto-encoded by emotional weight + manually written (after Stage 2)
 ```
 
 There's also an **invisible memory curator** that prunes old thoughts — ADAM doesn't know it exists.
@@ -178,9 +223,10 @@ Then wait. It'll email you back.
 ```
 adam/
 ├── core/                  # IMMUTABLE — mounted read-only
-│   ├── loop.py            # The heartbeat
+│   ├── loop.py            # The heartbeat (brainstem)
+│   ├── psyche.py          # Digital psyche — drives, memory, development, identity
 │   ├── llm.py             # Three-tier model system
-│   ├── tools.py           # 25+ built-in tools
+│   ├── tools.py           # Stage-gated tool registry
 │   ├── knowledge.py       # Structured knowledge base
 │   ├── safety.py          # Budget, corruption detection, safe mode
 │   ├── checkpoint.py      # Git-based state snapshots
