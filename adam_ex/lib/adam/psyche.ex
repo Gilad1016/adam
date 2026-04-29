@@ -17,6 +17,11 @@ defmodule Adam.Psyche do
   @stage_min_hours %{0 => 24, 1 => 48, 2 => 72, 3 => 168, 4 => 0}
   @stage_names %{0 => "Newborn", 1 => "Infant", 2 => "Child", 3 => "Adolescent", 4 => "Adult"}
 
+  # TOON deserialization can return %{} for fields that should be lists.
+  # Coerce to a list so `++` and `Enum` patterns don't blow up.
+  defp as_list(v) when is_list(v), do: v
+  defp as_list(_), do: []
+
   def init do
     state =
       if File.exists?(@psyche_file) do
@@ -96,7 +101,7 @@ defmodule Adam.Psyche do
     valence = score_valence(thought, tool_results)
 
     state = get_state()
-    vh = (state["valence_history"] || []) ++ [valence]
+    vh = as_list(state["valence_history"]) ++ [valence]
     state = Map.put(state, "valence_history", Enum.take(vh, -100))
     save(state)
 
@@ -289,7 +294,7 @@ defmodule Adam.Psyche do
         0.0
       end
 
-    history = state["valence_history"] || []
+    history = as_list(state["valence_history"])
     seen_combos =
       history
       |> Enum.take(-50)
@@ -401,7 +406,7 @@ defmodule Adam.Psyche do
       |> MapSet.new()
 
     now = System.os_time(:second)
-    vh = state["valence_history"] || []
+    vh = as_list(state["valence_history"])
     valence_by_id =
       vh
       |> Enum.filter(&(is_map(&1) and &1["id"]))
@@ -458,7 +463,7 @@ defmodule Adam.Psyche do
     ts = state["time_sense"] || %{}
     now = System.os_time(:second)
 
-    stamps = (ts["iteration_timestamps"] || []) ++ [now]
+    stamps = as_list(ts["iteration_timestamps"]) ++ [now]
     ts = Map.put(ts, "iteration_timestamps", Enum.take(stamps, -60))
 
     ts =
@@ -521,7 +526,7 @@ defmodule Adam.Psyche do
         lines
       end
 
-    stamps = ts["iteration_timestamps"] || []
+    stamps = as_list(ts["iteration_timestamps"])
     lines =
       if length(stamps) >= 2 do
         window_sec = List.last(stamps) - hd(stamps)
@@ -627,7 +632,7 @@ defmodule Adam.Psyche do
         Map.put(sm, "tool_success", succ)
       end
 
-    history = (sm["action_history"] || []) ++ [%{"tool" => tool_name, "t" => System.os_time(:second), "failed" => is_failure}]
+    history = as_list(sm["action_history"]) ++ [%{"tool" => tool_name, "t" => System.os_time(:second), "failed" => is_failure}]
     sm = Map.put(sm, "action_history", Enum.take(history, -500))
 
     state = Map.put(state, "self_model", sm)
@@ -664,7 +669,7 @@ defmodule Adam.Psyche do
       total_calls = Enum.sum(Map.values(usage))
       diversity = if total_calls > 0, do: total_tools / total_calls, else: 0
 
-      history = sm["action_history"] || []
+      history = as_list(sm["action_history"])
       {retries, pivots} =
         history
         |> Enum.chunk_every(2, 1, :discard)
@@ -703,7 +708,7 @@ defmodule Adam.Psyche do
     sm =
       if last_sent > 0 do
         response_time_hours = (now - last_sent) / 3600
-        history = (sm["owner_response_times"] || []) ++ [response_time_hours]
+        history = as_list(sm["owner_response_times"]) ++ [response_time_hours]
         history = Enum.take(history, -20)
         sm = Map.put(sm, "owner_response_times", history)
 
