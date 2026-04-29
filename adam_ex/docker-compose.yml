@@ -1,0 +1,35 @@
+services:
+  ollama:
+    image: ollama/ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+
+  adam:
+    build: .
+    depends_on:
+      - ollama
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+    env_file:
+      - .env
+    volumes:
+      - ./lib:/app/lib:ro
+      - ./prompts:/app/prompts
+      - ./tools:/app/tools
+      - ./strategies:/app/strategies
+      - ./memory:/app/memory
+      - ./knowledge:/app/knowledge
+      - sandbox:/app/sandbox
+
+volumes:
+  ollama_data:
+  sandbox:

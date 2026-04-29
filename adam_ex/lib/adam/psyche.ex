@@ -1,0 +1,779 @@
+defmodule Adam.Psyche do
+  @psyche_file "/app/memory/psyche.toon"
+  @signals_file "/app/memory/maturity_signals.toon"
+  @rebuild_interval 50
+
+  @pain_keywords ~w(error failed timeout exception rejected crash corrupt)
+  @satisfaction_keywords ~w(wrote saved created started updated sent installed)
+
+  @stage_tools %{
+    0 => MapSet.new(~w(read_file write_file shell wait)),
+    1 => MapSet.new(~w(sandbox_run sandbox_install sandbox_project)),
+    2 => MapSet.new(~w(web_search web_read write_knowledge search_knowledge list_knowledge update_knowledge read_knowledge)),
+    3 => MapSet.new(~w(create_tool modify_prompt send_email escalate set_alarm remove_alarm list_alarms schedule_add schedule_remove schedule_list)),
+    4 => MapSet.new(~w(sandbox_service_start sandbox_service_stop sandbox_services sandbox_log))
+  }
+
+  @stage_min_hours %{0 => 24, 1 => 48, 2 => 72, 3 => 168, 4 => 0}
+  @stage_names %{0 => "Newborn", 1 => "Infant", 2 => "Child", 3 => "Adolescent", 4 => "Adult"}
+
+  def init do
+    state =
+      if File.exists?(@psyche_file) do
+        try do
+          @psyche_file |> File.read!() |> Adam.Toon.decode()
+        rescue
+          _ -> default_state()
+        end
+      else
+        default_state()
+      end
+
+    save(state)
+  end
+
+  def get_state do
+    if File.exists?(@psyche_file) do
+      try do
+        @psyche_file |> File.read!() |> Adam.Toon.decode()
+      rescue
+        _ -> default_state()
+      end
+    else
+      state = default_state()
+      save(state)
+      state
+    end
+  end
+
+  def prepare(_iteration) do
+    state = get_state()
+    parts = []
+
+    drives_text = drives_to_text(state)
+    parts = if drives_text != "", do: parts ++ ["== INTERNAL STATE ==\n#{drives_text}\n== END INTERNAL STATE =="], else: parts
+
+    time_text = time_sense_to_text(state)
+    parts = if time_text != "", do: parts ++ ["== TIME ==\n#{time_text}\n== END TIME =="], else: parts
+
+    self_text = self_model_to_text(state)
+    parts = if self_text != "", do: parts ++ [self_text], else: parts
+
+    owner_text = owner_model_to_text(state)
+    parts = if owner_text != "", do: parts ++ [owner_text], else: parts
+
+    context_for_recall =
+      if File.exists?("/app/prompts/goals.md") do
+        File.read!("/app/prompts/goals.md")
+      else
+        ""
+      end
+
+    memories_text = recall_memories(context_for_recall, state)
+    parts = if memories_text != "", do: parts ++ [memories_text], else: parts
+
+    context = Enum.join(parts, "\n\n")
+    allowed_tools = get_available_tools()
+
+    %{context: context, allowed_tools: allowed_tools}
+  end
+
+  def process(thought, tool_results) do
+    state = get_state()
+    history_len = length(get_in_state(state, ["self_model", "action_history"]) || [])
+
+    Enum.each(tool_results, fn r ->
+      track_action(r.name, r[:args] || %{}, to_string(r.result))
+    end)
+
+    state = get_state()
+    new_len = length(get_in_state(state, ["self_model", "action_history"]) || [])
+
+    if div(new_len, @rebuild_interval) > div(history_len, @rebuild_interval) do
+      rebuild_self_model()
+    end
+
+    valence = score_valence(thought, tool_results)
+
+    state = get_state()
+    vh = (state["valence_history"] || []) ++ [valence]
+    state = Map.put(state, "valence_history", Enum.take(vh, -100))
+    save(state)
+
+    encode_memory(valence, thought, tool_results)
+    update_drives(thought, tool_results)
+    update_time_sense(new_len, tool_results)
+    emit_maturity_signals()
+  end
+
+  def process_owner_email(msg) do
+    record_email_received()
+    track_owner_interaction(msg)
+
+    state = get_state()
+    drives = state["drives"] || %{}
+    social = (drives["social"] || 0.1) * 0.3
+    drives = Map.put(drives, "social", clamp(social))
+    state = Map.put(state, "drives", drives)
+    save(state)
+
+    subject = msg["subject"] || ""
+    if String.upcase(subject) |> String.starts_with?("GOAL:") do
+      record_goal_set()
+    end
+  end
+
+  def emit_signals, do: emit_maturity_signals()
+
+  def advance_stage do
+    state = get_state()
+    current = state["stage"] || 0
+    max_stage = Enum.max(Map.keys(@stage_tools))
+
+    if current < max_stage do
+      state = Map.merge(state, %{"stage" => current + 1, "stage_entered" => System.os_time(:second)})
+      save(state)
+      IO.puts("[PSYCHE] Stage advanced: #{current} -> #{state["stage"]} (#{@stage_names[state["stage"]]})")
+    end
+  end
+
+  def get_available_tools do
+    state = get_state()
+    stage = state["stage"] || 0
+
+    0..stage
+    |> Enum.reduce(MapSet.new(), fn s, acc ->
+      MapSet.union(acc, Map.get(@stage_tools, s, MapSet.new()))
+    end)
+  end
+
+  def get_stage, do: (get_state()["stage"] || 0)
+  def get_stage_name, do: @stage_names[get_stage()]
+
+  # ---------------------------------------------------------------------------
+  # DRIVE SYSTEM
+  # ---------------------------------------------------------------------------
+
+  defp compute_energy do
+    try do
+      budget = Adam.Safety.load_budget()
+      balance = budget["balance"] || 0
+      initial = budget["initial"] || 1
+      if initial <= 0, do: 0.0, else: clamp(balance / initial)
+    rescue
+      _ -> 0.5
+    end
+  end
+
+  defp update_drives(_thought, tool_results) do
+    state = get_state()
+    drives = state["drives"] || %{}
+
+    drives = Map.put(drives, "energy", compute_energy())
+
+    drives =
+      if tool_results != nil and tool_results != [] do
+        used_tools = MapSet.new(Enum.map(tool_results, & &1.name))
+        history = get_in_state(state, ["self_model", "action_history"]) || []
+        history_tools = history |> Enum.take(-20) |> Enum.map(fn e -> e["tool"] || "" end) |> MapSet.new()
+
+        curiosity = drives["curiosity"] || 0.5
+        curiosity =
+          Enum.reduce(used_tools, curiosity, fn tool, cur ->
+            if not MapSet.member?(history_tools, tool) do
+              clamp(cur - 0.05)
+            else
+              clamp(cur + 0.01)
+            end
+          end)
+
+        mastery = drives["mastery"] || 0.3
+        mastery =
+          Enum.reduce(tool_results, mastery, fn r, m ->
+            result_lower = String.downcase(to_string(r.result))
+            is_failure = Enum.any?(@pain_keywords, &String.contains?(result_lower, &1))
+            if is_failure, do: clamp(m + 0.03), else: clamp(m - 0.02)
+          end)
+
+        drives
+        |> Map.put("curiosity", curiosity)
+        |> Map.put("mastery", mastery)
+      else
+        curiosity = clamp((drives["curiosity"] || 0.5) + 0.02)
+        Map.put(drives, "curiosity", curiosity)
+      end
+
+    ts = state["time_sense"] || %{}
+    last_sent = ts["last_email_sent"] || 0
+    now = System.os_time(:second)
+    social = drives["social"] || 0.1
+
+    social =
+      if now - last_sent < 3600 do
+        clamp(social * 0.3, 0.0, 0.3)
+      else
+        clamp(social + 0.005)
+      end
+
+    drives = Map.put(drives, "social", social)
+    state = Map.put(state, "drives", drives)
+    save(state)
+  end
+
+  defp drives_to_text(state) do
+    drives = state["drives"] || %{}
+    lines = []
+
+    energy = drives["energy"] || 1.0
+    lines = lines ++ [cond do
+      energy > 0.7 -> "Your energy is comfortable. No pressure."
+      energy > 0.4 -> "Your energy is moderate. Be thoughtful about expensive operations."
+      energy > 0.15 -> "Your energy is low. Conserve where possible."
+      true -> "Your energy is critically low. Prioritize essential work only."
+    end]
+
+    curiosity = drives["curiosity"] || 0.5
+    lines = lines ++ [cond do
+      curiosity > 0.7 -> "You feel restless — you've been in familiar territory too long."
+      curiosity > 0.4 -> "You feel curious and engaged."
+      true -> "You feel settled. Your current work feels purposeful."
+    end]
+
+    mastery = drives["mastery"] || 0.3
+    lines = lines ++ [cond do
+      mastery > 0.7 -> "You're hungry to improve — recent failures are pushing you forward."
+      mastery > 0.4 -> "You feel a drive to get better at what you do."
+      true -> "You feel competent and capable right now."
+    end]
+
+    social = drives["social"] || 0.1
+    lines = lines ++ [cond do
+      social > 0.6 -> "You feel an urge to check in with your owner."
+      social > 0.3 -> "You're aware of your owner in the background."
+      true -> "You feel focused and self-directed."
+    end]
+
+    Enum.join(lines, "\n")
+  end
+
+  # ---------------------------------------------------------------------------
+  # VALENCE SCORER
+  # ---------------------------------------------------------------------------
+
+  defp score_valence(thought, tool_results) do
+    now = System.os_time(:second)
+    state = get_state()
+    thought_text = if is_map(thought), do: thought["content"] || thought[:content] || "", else: ""
+    results_text = Enum.map(tool_results, fn r -> to_string(r.result) end) |> Enum.join(" ") |> String.downcase()
+    all_text = String.downcase(thought_text <> " " <> results_text)
+
+    surprise =
+      if tool_results != [] do
+        actual_errors = Enum.count(tool_results, fn r ->
+          rt = String.downcase(to_string(r.result))
+          Enum.any?(@pain_keywords, &String.contains?(rt, &1))
+        end)
+
+        s = if actual_errors > 0, do: clamp(actual_errors / length(tool_results)), else: 0.0
+
+        empty_outputs = Enum.count(tool_results, fn r ->
+          String.trim(to_string(r.result)) in ["", "None", "null", "none"]
+        end)
+        s = if empty_outputs > 0, do: clamp(s + 0.3), else: s
+
+        large_outputs = Enum.count(tool_results, fn r ->
+          String.length(to_string(r.result)) > 2000
+        end)
+        if large_outputs > 0, do: clamp(s + 0.2), else: s
+      else
+        0.0
+      end
+
+    history = state["valence_history"] || []
+    seen_combos =
+      history
+      |> Enum.take(-50)
+      |> Enum.filter(&is_map/1)
+      |> Enum.map(fn e -> e["combo"] || "" end)
+      |> MapSet.new()
+
+    current_combos =
+      Enum.map(tool_results, fn r ->
+        args_keys = if is_map(r[:args] || r[:arguments]), do: Map.keys(r[:args] || r[:arguments] || %{}) |> Enum.sort(), else: []
+        "#{r.name}#{inspect(args_keys)}"
+      end)
+      |> MapSet.new()
+
+    novelty =
+      if MapSet.size(current_combos) > 0 do
+        novel_count = Enum.count(current_combos, fn c -> not MapSet.member?(seen_combos, c) end)
+        clamp(novel_count / MapSet.size(current_combos))
+      else
+        0.0
+      end
+
+    pain_count = Enum.count(@pain_keywords, &String.contains?(results_text, &1))
+    pain = clamp(pain_count / length(@pain_keywords))
+
+    sat_count = Enum.count(@satisfaction_keywords, &String.contains?(results_text, &1))
+    satisfaction = clamp(sat_count / length(@satisfaction_keywords))
+
+    relevance =
+      if File.exists?("/app/prompts/goals.md") do
+        try do
+          goals_text = File.read!("/app/prompts/goals.md") |> String.downcase()
+          goal_words = goals_text |> String.split() |> Enum.filter(&(String.length(&1) > 4)) |> MapSet.new()
+          context_words = all_text |> String.split() |> Enum.filter(&(String.length(&1) > 4)) |> MapSet.new()
+
+          if MapSet.size(goal_words) > 0 do
+            overlap = MapSet.intersection(goal_words, context_words) |> MapSet.size()
+            clamp(overlap / MapSet.size(goal_words) * 5)
+          else
+            0.0
+          end
+        rescue
+          _ -> 0.0
+        end
+      else
+        0.0
+      end
+
+    composite = (surprise + novelty + pain + satisfaction + relevance) / 5.0
+    combo_key = tool_results |> Enum.map(& &1.name) |> Enum.sort() |> Enum.join(",")
+
+    %{
+      "surprise" => Float.round(surprise + 0.0, 3),
+      "novelty" => Float.round(novelty + 0.0, 3),
+      "pain" => Float.round(pain + 0.0, 3),
+      "satisfaction" => Float.round(satisfaction + 0.0, 3),
+      "relevance" => Float.round(relevance + 0.0, 3),
+      "composite" => Float.round(composite + 0.0, 3),
+      "timestamp" => now,
+      "combo" => combo_key
+    }
+  end
+
+  # ---------------------------------------------------------------------------
+  # ASSOCIATIVE MEMORY
+  # ---------------------------------------------------------------------------
+
+  defp encode_memory(valence, thought, tool_results) do
+    if (valence["composite"] || 0) <= 0.6, do: :ok, else: do_encode_memory(valence, thought, tool_results)
+  end
+
+  defp do_encode_memory(valence, thought, tool_results) do
+    tags = ["auto-encoded"]
+    tags = if (valence["pain"] || 0) > 0.4, do: tags ++ ["painful"], else: tags
+    tags = if (valence["surprise"] || 0) > 0.4, do: tags ++ ["surprising"], else: tags
+    tags = if (valence["satisfaction"] || 0) > 0.4, do: tags ++ ["satisfying"], else: tags
+    tags = if (valence["novelty"] || 0) > 0.4, do: tags ++ ["novel"], else: tags
+
+    thought_text = if is_map(thought), do: String.slice(thought["content"] || thought[:content] || "", 0, 300), else: ""
+
+    result_summary =
+      tool_results
+      |> Enum.take(3)
+      |> Enum.map(fn r -> "#{r.name}: #{String.slice(to_string(r.result), 0, 100)}" end)
+      |> Enum.join("; ")
+
+    content = "Thought: #{thought_text}\n\nActions: #{result_summary}\n\nValence: #{inspect(valence)}"
+    now = DateTime.utc_now() |> Calendar.strftime("%Y-%m-%d %H:%M")
+    topic = "auto-memory #{now}"
+
+    try do
+      Adam.Knowledge.write(topic, content, tags)
+    rescue
+      _ -> :ok
+    end
+  end
+
+  defp recall_memories(context, state) do
+    index = Adam.Knowledge.load_index()
+    if index == [], do: "", else: do_recall(context, index, state)
+  end
+
+  defp do_recall(context, index, state) do
+    context_words =
+      context
+      |> String.downcase()
+      |> String.split()
+      |> Enum.filter(&(String.length(&1) > 4))
+      |> MapSet.new()
+
+    now = System.os_time(:second)
+    vh = state["valence_history"] || []
+    valence_by_id =
+      vh
+      |> Enum.filter(&(is_map(&1) and &1["id"]))
+      |> Map.new(fn v -> {v["id"], v["composite"] || 0} end)
+
+    scored =
+      Enum.map(index, fn item ->
+        topic_words = (item["topic"] || "") |> String.downcase() |> String.split() |> Enum.filter(&(String.length(&1) > 4)) |> MapSet.new()
+        tag_words = (item["tags"] || "") |> String.downcase() |> String.split(~r/[;,\s]/) |> MapSet.new()
+        all_words = MapSet.union(topic_words, tag_words)
+
+        keyword_overlap = MapSet.intersection(context_words, all_words) |> MapSet.size()
+        score = keyword_overlap * 1.0
+
+        entry_id = item["id"] || ""
+        score = score + (valence_by_id[entry_id] || 0) * 2.0
+
+        created = item["updated"] || item["created"] || 0
+        created = if is_integer(created), do: created, else: 0
+        age_days = (now - created) / 86400
+        recency = max(0.0, 1.0 - age_days / 7.0)
+        score = score + recency * 0.5
+
+        {score, item}
+      end)
+      |> Enum.filter(fn {score, _} -> score > 0 end)
+      |> Enum.sort_by(fn {score, _} -> score end, :desc)
+      |> Enum.take(5)
+
+    if scored == [] do
+      ""
+    else
+      lines = ["== SURFACED MEMORIES =="]
+
+      lines =
+        lines ++
+          Enum.map(scored, fn {_, item} ->
+            tags = item["tags"] || "none"
+            summary = String.slice(item["topic"] || "", 0, 120)
+            "- [#{item["id"]}] #{summary} (tags: #{tags})"
+          end)
+
+      lines = lines ++ ["== END MEMORIES =="]
+      Enum.join(lines, "\n")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # TIME SENSE
+  # ---------------------------------------------------------------------------
+
+  defp update_time_sense(_iteration, tool_results) do
+    state = get_state()
+    ts = state["time_sense"] || %{}
+    now = System.os_time(:second)
+
+    stamps = (ts["iteration_timestamps"] || []) ++ [now]
+    ts = Map.put(ts, "iteration_timestamps", Enum.take(stamps, -60))
+
+    ts =
+      if tool_results do
+        Enum.reduce(tool_results, ts, fn r, acc ->
+          if r.name == "send_email", do: Map.put(acc, "last_email_sent", now), else: acc
+        end)
+      else
+        ts
+      end
+
+    state = Map.put(state, "time_sense", ts)
+    save(state)
+  end
+
+  defp record_email_received do
+    state = get_state()
+    ts = state["time_sense"] || %{}
+    ts = Map.put(ts, "last_email_received", System.os_time(:second))
+    state = Map.put(state, "time_sense", ts)
+    save(state)
+  end
+
+  defp record_goal_set do
+    state = get_state()
+    ts = state["time_sense"] || %{}
+    ts = Map.put(ts, "last_goal_set", System.os_time(:second))
+    state = Map.put(state, "time_sense", ts)
+    save(state)
+  end
+
+  defp time_sense_to_text(state) do
+    ts = state["time_sense"] || %{}
+    now = System.os_time(:second)
+    lines = []
+
+    last_sent = ts["last_email_sent"] || 0
+    lines =
+      if last_sent > 0 do
+        hours_ago = (now - last_sent) / 3600
+        if hours_ago < 1 do
+          lines ++ ["You emailed your owner #{div(now - last_sent, 60)} minutes ago."]
+        else
+          lines ++ ["You emailed your owner #{Float.round(hours_ago, 1)} hours ago."]
+        end
+      else
+        lines
+      end
+
+    last_received = ts["last_email_received"] || 0
+    lines =
+      if last_received > 0 do
+        hours_ago = (now - last_received) / 3600
+        if hours_ago < 1 do
+          lines ++ ["Your owner emailed you #{div(now - last_received, 60)} minutes ago."]
+        else
+          lines ++ ["Your owner last emailed you #{Float.round(hours_ago, 1)} hours ago."]
+        end
+      else
+        lines
+      end
+
+    stamps = ts["iteration_timestamps"] || []
+    lines =
+      if length(stamps) >= 2 do
+        window_sec = List.last(stamps) - hd(stamps)
+        if window_sec > 0 do
+          tpm = length(stamps) / (window_sec / 60)
+          lines ++ ["You're thinking about #{Float.round(tpm, 1)} thoughts per minute."]
+        else
+          lines
+        end
+      else
+        lines
+      end
+
+    stage_entered = state["stage_entered"] || now
+    stage_entered = if is_number(stage_entered), do: stage_entered, else: now
+    stage_days = (now - stage_entered) / 86400
+
+    lines =
+      if stage_days < 1 do
+        stage_hours = stage_days * 24
+        lines ++ ["You've been in your current stage for #{Float.round(stage_hours, 1)} hours."]
+      else
+        lines ++ ["You've been in your current stage for #{Float.round(stage_days, 1)} days."]
+      end
+
+    Enum.join(lines, "\n")
+  end
+
+  # ---------------------------------------------------------------------------
+  # DEVELOPMENTAL STAGE TRACKER
+  # ---------------------------------------------------------------------------
+
+  defp compute_maturity_signals do
+    state = get_state()
+    current_stage = state["stage"] || 0
+    stage_entered = state["stage_entered"] || System.os_time(:second)
+    now = System.os_time(:second)
+    hours_in_stage = (now - stage_entered) / 3600
+    max_stage = Enum.max(Map.keys(@stage_tools))
+
+    if current_stage < max_stage do
+      next_stage = current_stage + 1
+      min_hours = @stage_min_hours[current_stage] || 24
+      time_ready = hours_in_stage >= min_hours
+
+      sm = state["self_model"] || %{}
+      tool_usage = sm["tool_usage"] || %{}
+      current_tools = @stage_tools[current_stage] || MapSet.new()
+      tools_used = MapSet.new(Map.keys(tool_usage)) |> MapSet.intersection(current_tools)
+      tool_breadth_ready = MapSet.size(tools_used) >= max(1, trunc(MapSet.size(current_tools) * 0.6))
+
+      total_uses = Enum.reduce(current_tools, 0, fn t, acc -> acc + (tool_usage[t] || 0) end)
+      tool_failure = sm["tool_failure"] || %{}
+      total_failures = Enum.reduce(current_tools, 0, fn t, acc -> acc + (tool_failure[t] || 0) end)
+      failure_rate = if total_uses > 0, do: total_failures / total_uses, else: 1.0
+      low_failure_ready = failure_rate < 0.3
+
+      ready = time_ready and tool_breadth_ready and low_failure_ready
+
+      detail =
+        "Stage #{current_stage} -> #{next_stage} (#{@stage_names[next_stage]}): " <>
+          "time=#{Float.round(hours_in_stage, 1)}h/#{min_hours}h, " <>
+          "tools_used=#{MapSet.size(tools_used)}/#{MapSet.size(current_tools)}, " <>
+          "failure_rate=#{trunc(failure_rate * 100)}%"
+
+      [%{"stage" => next_stage, "ready" => ready, "detail" => detail}]
+    else
+      []
+    end
+  end
+
+  defp emit_maturity_signals do
+    signals = compute_maturity_signals()
+
+    if signals != [] do
+      File.mkdir_p!(Path.dirname(@signals_file))
+      File.write!(@signals_file, Adam.Toon.encode(signals))
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # SELF-MODEL
+  # ---------------------------------------------------------------------------
+
+  defp track_action(tool_name, _args, result) do
+    state = get_state()
+    sm = state["self_model"] || %{}
+
+    usage = sm["tool_usage"] || %{}
+    usage = Map.put(usage, tool_name, (usage[tool_name] || 0) + 1)
+    sm = Map.put(sm, "tool_usage", usage)
+
+    is_failure = Enum.any?(@pain_keywords, &String.contains?(String.downcase(result), &1))
+
+    sm =
+      if is_failure do
+        fail = sm["tool_failure"] || %{}
+        fail = Map.put(fail, tool_name, (fail[tool_name] || 0) + 1)
+        Map.put(sm, "tool_failure", fail)
+      else
+        succ = sm["tool_success"] || %{}
+        succ = Map.put(succ, tool_name, (succ[tool_name] || 0) + 1)
+        Map.put(sm, "tool_success", succ)
+      end
+
+    history = (sm["action_history"] || []) ++ [%{"tool" => tool_name, "t" => System.os_time(:second), "failed" => is_failure}]
+    sm = Map.put(sm, "action_history", Enum.take(history, -500))
+
+    state = Map.put(state, "self_model", sm)
+    save(state)
+  end
+
+  defp rebuild_self_model do
+    state = get_state()
+    sm = state["self_model"] || %{}
+    usage = sm["tool_usage"] || %{}
+    success = sm["tool_success"] || %{}
+    failure = sm["tool_failure"] || %{}
+
+    if usage == %{} do
+      sm = Map.merge(sm, %{"summary" => "No tool usage recorded yet.", "last_rebuilt" => System.os_time(:second)})
+      state = Map.put(state, "self_model", sm)
+      save(state)
+    else
+      sorted_usage = Enum.sort_by(usage, fn {_k, v} -> v end, :desc)
+
+      {strengths, weaknesses} =
+        Enum.reduce(sorted_usage, {[], []}, fn {tool, count}, {str, weak} ->
+          s = success[tool] || 0
+          f = failure[tool] || 0
+          total = s + f
+          rate = if total > 0, do: s / total, else: 0.5
+
+          str = if count >= 3 and rate >= 0.7, do: str ++ ["#{tool} (#{trunc(rate * 100)}% success, #{count}x used)"], else: str
+          weak = if f >= 2 and rate < 0.5, do: weak ++ ["#{tool} (#{trunc(rate * 100)}% success, #{f} failures)"], else: weak
+          {str, weak}
+        end)
+
+      total_tools = map_size(usage)
+      total_calls = Enum.sum(Map.values(usage))
+      diversity = if total_calls > 0, do: total_tools / total_calls, else: 0
+
+      history = sm["action_history"] || []
+      {retries, pivots} =
+        history
+        |> Enum.chunk_every(2, 1, :discard)
+        |> Enum.reduce({0, 0}, fn [prev, curr], {r, p} ->
+          if prev["failed"] and not curr["failed"] do
+            if curr["tool"] == prev["tool"], do: {r + 1, p}, else: {r, p + 1}
+          else
+            {r, p}
+          end
+        end)
+
+      lines = []
+      lines = if strengths != [], do: lines ++ ["Strengths: #{Enum.take(strengths, 3) |> Enum.join(", ")}"], else: lines
+      lines = if weaknesses != [], do: lines ++ ["Weaknesses: #{Enum.take(weaknesses, 3) |> Enum.join(", ")}"], else: lines
+      lines = lines ++ ["Tool diversity: #{total_tools} distinct tools across #{total_calls} calls (#{trunc(diversity * 100)}% spread)."]
+      lines = if retries + pivots > 0, do: lines ++ ["When you fail, you retry #{retries}x and pivot #{pivots}x."], else: lines
+
+      sm = Map.merge(sm, %{"summary" => Enum.join(lines, " "), "last_rebuilt" => System.os_time(:second)})
+      state = Map.put(state, "self_model", sm)
+      save(state)
+    end
+  end
+
+  defp self_model_to_text(state) do
+    summary = get_in_state(state, ["self_model", "summary"]) || ""
+    if summary == "", do: "", else: "== SELF ==\n#{summary}\n== END SELF =="
+  end
+
+  defp track_owner_interaction(_msg) do
+    state = get_state()
+    sm = state["self_model"] || %{}
+
+    last_sent = get_in_state(state, ["time_sense", "last_email_sent"]) || 0
+    now = System.os_time(:second)
+
+    sm =
+      if last_sent > 0 do
+        response_time_hours = (now - last_sent) / 3600
+        history = (sm["owner_response_times"] || []) ++ [response_time_hours]
+        history = Enum.take(history, -20)
+        sm = Map.put(sm, "owner_response_times", history)
+
+        avg = Enum.sum(history) / length(history)
+
+        owner_summary = cond do
+          avg < 0.5 -> "Your owner typically responds within minutes."
+          avg < 4 -> "Your owner typically responds within a few hours."
+          avg < 24 -> "Your owner typically responds within a day."
+          true -> "Your owner typically takes about #{trunc(avg)} hours to respond."
+        end
+
+        Map.put(sm, "owner_summary", owner_summary)
+      else
+        sm
+      end
+
+    state = Map.put(state, "self_model", sm)
+    save(state)
+  end
+
+  defp owner_model_to_text(state) do
+    get_in_state(state, ["self_model", "owner_summary"]) || ""
+  end
+
+  # ---------------------------------------------------------------------------
+  # HELPERS
+  # ---------------------------------------------------------------------------
+
+  defp default_state do
+    %{
+      "stage" => 0,
+      "stage_entered" => System.os_time(:second),
+      "drives" => %{
+        "energy" => 1.0,
+        "curiosity" => 0.5,
+        "mastery" => 0.3,
+        "social" => 0.1
+      },
+      "time_sense" => %{
+        "last_email_sent" => 0,
+        "last_email_received" => 0,
+        "last_goal_set" => 0,
+        "iteration_timestamps" => []
+      },
+      "self_model" => %{
+        "tool_usage" => %{},
+        "tool_success" => %{},
+        "tool_failure" => %{},
+        "action_history" => [],
+        "summary" => "",
+        "owner_summary" => "",
+        "last_rebuilt" => 0
+      },
+      "valence_history" => []
+    }
+  end
+
+  defp clamp(value, lo \\ 0.0, hi \\ 1.0) do
+    max(lo, min(hi, value + 0.0))
+  end
+
+  defp save(state) do
+    File.mkdir_p!(Path.dirname(@psyche_file))
+    File.write!(@psyche_file, Adam.Toon.encode(state))
+  end
+
+  defp get_in_state(state, keys) do
+    Enum.reduce(keys, state, fn key, acc ->
+      if is_map(acc), do: acc[key], else: nil
+    end)
+  end
+end
