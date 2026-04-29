@@ -34,7 +34,16 @@ defmodule Adam.EmailClient do
       []
     else
       try do
-        {:ok, socket} = :ssl.connect(~c"imap.gmail.com", 993, [:binary, active: false])
+        ssl_opts = [
+          :binary,
+          active: false,
+          verify: :verify_peer,
+          cacerts: :public_key.cacerts_get(),
+          server_name_indication: ~c"imap.gmail.com",
+          depth: 99
+        ]
+
+        {:ok, socket} = :ssl.connect(~c"imap.gmail.com", 993, ssl_opts)
         {:ok, _greeting} = :ssl.recv(socket, 0, 10_000)
 
         imap_command(socket, "LOGIN #{addr} #{password}")

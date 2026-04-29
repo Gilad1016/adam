@@ -93,11 +93,28 @@ defmodule Adam.Toon do
   defp serialize_val(true), do: "true"
   defp serialize_val(false), do: "false"
   defp serialize_val(v) when is_number(v), do: to_string(v)
-  defp serialize_val(v), do: to_string(v)
+  defp serialize_val(v) when is_list(v), do: Jason.encode!(v)
+  defp serialize_val(v) when is_binary(v), do: v
+  defp serialize_val(v) when is_atom(v), do: Atom.to_string(v)
+  defp serialize_val(v), do: Jason.encode!(v)
 
   defp deserialize_val("null"), do: nil
   defp deserialize_val("true"), do: true
   defp deserialize_val("false"), do: false
+
+  defp deserialize_val("[" <> _ = v) do
+    case Jason.decode(v) do
+      {:ok, decoded} -> decoded
+      _              -> v
+    end
+  end
+
+  defp deserialize_val("{" <> _ = v) do
+    case Jason.decode(v) do
+      {:ok, decoded} -> decoded
+      _              -> v
+    end
+  end
 
   defp deserialize_val(v) do
     case Integer.parse(v) do

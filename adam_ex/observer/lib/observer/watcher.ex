@@ -55,9 +55,11 @@ defmodule Observer.Watcher do
     case File.open(path, [:read, :binary]) do
       {:ok, file} ->
         :file.position(file, pos)
-        content = IO.binread(file, :eof)
+        raw = IO.binread(file, :eof)
         File.close(file)
 
+        # IO.binread returns :eof when there are no new bytes since `pos`.
+        content = if is_binary(raw), do: raw, else: ""
         new_pos = pos + byte_size(content)
 
         events =
