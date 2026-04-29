@@ -33,10 +33,21 @@ defmodule Adam.LLM do
 
     results =
       Enum.map(models, fn model ->
-        case Req.post(ollama_url() <> "/api/pull", json: %{name: model, stream: false}, receive_timeout: 600_000) do
-          {:ok, %{status: 200}} -> "#{model} ready"
-          _ -> "#{model} FAILED"
-        end
+        IO.puts("[ADAM] Pulling model #{model} (this can take a while on first run)...")
+        t0 = System.monotonic_time(:second)
+
+        result =
+          case Req.post(ollama_url() <> "/api/pull",
+                 json: %{name: model, stream: false},
+                 receive_timeout: 1_800_000
+               ) do
+            {:ok, %{status: 200}} -> "#{model} ready"
+            {:ok, %{status: status}} -> "#{model} FAILED (status #{status})"
+            {:error, err} -> "#{model} FAILED (#{inspect(err)})"
+          end
+
+        IO.puts("[ADAM] #{result} (#{System.monotonic_time(:second) - t0}s)")
+        result
       end)
 
     Enum.join(results, ", ")
