@@ -52,10 +52,12 @@ defmodule Adam.Loop do
     routines = Adam.Scheduler.check_routines()
 
     if rem(iteration, 20) == 0 do
-      summary_path = "/app/memory/summary.toon"
-      before_size = if File.exists?(summary_path), do: File.stat!(summary_path).size, else: 0
+      # Compaction rewrites thought_log.toon in place (collapses old entries
+      # into a single summary entry). Watch that file's size for changes.
+      log_path = "/app/memory/thought_log.toon"
+      before_size = if File.exists?(log_path), do: File.stat!(log_path).size, else: 0
       Adam.Compaction.check()
-      after_size = if File.exists?(summary_path), do: File.stat!(summary_path).size, else: 0
+      after_size = if File.exists?(log_path), do: File.stat!(log_path).size, else: 0
       if after_size != before_size, do: Adam.Observer.memory_compact(before_size, after_size, iteration)
     end
     if rem(iteration, 30) == 0, do: Adam.Speciation.check()
@@ -92,7 +94,7 @@ defmodule Adam.Loop do
 
     Adam.Psyche.process(thought, tool_results)
 
-    exp_path = "/app/memory/experiences.toon"
+    exp_path = "/app/memory/thought_log.toon"
     old_size = if File.exists?(exp_path), do: File.stat!(exp_path).size, else: 0
     Adam.Compaction.log_thought(iteration, thought.content, tool_results)
     new_size = if File.exists?(exp_path), do: File.stat!(exp_path).size, else: 0
