@@ -42,6 +42,16 @@ defmodule Observer.Watcher do
   # Read new content starting at byte offset `pos`.
   # Returns {[decoded_events], new_byte_position}.
   defp read_from(path, pos) do
+    cond do
+      not File.exists?(path) ->
+        {[], pos}
+
+      true ->
+        do_read(path, pos)
+    end
+  end
+
+  defp do_read(path, pos) do
     case File.open(path, [:read, :binary]) do
       {:ok, file} ->
         :file.position(file, pos)
