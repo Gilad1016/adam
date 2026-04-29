@@ -21,20 +21,25 @@ defmodule Adam.Curator.Curate do
     max_age_days = 30
 
     if length(index) > max_entries do
-      pruned =
-        index
-        |> Enum.reject(fn entry ->
+      {kept, dropped} =
+        Enum.split_with(index, fn entry ->
           updated = entry["updated"] || entry["created"] || 0
           updated = if is_integer(updated), do: updated, else: 0
           age_days = (now - updated) / 86400
-          age_days > max_age_days and not String.contains?(entry["tags"] || "", "important")
+          # Keep if young enough OR explicitly marked important
+          age_days <= max_age_days or String.contains?(entry["tags"] || "", "important")
         end)
-        |> Enum.take(max_entries)
 
-      removed = length(index) - length(pruned)
+      kept = Enum.take(kept, max_entries)
+
+      Enum.each(dropped, fn entry ->
+        if id = entry["id"], do: Adam.Knowledge.delete(id)
+      end)
+
+      removed = length(dropped)
 
       if removed > 0 do
-        IO.puts("[CURATOR] Pruned #{removed} old knowledge entries")
+        IO.puts("[CURATOR] Pruned #{removed} old knowledge entries (#{length(kept)} kept)")
       end
     end
   end
