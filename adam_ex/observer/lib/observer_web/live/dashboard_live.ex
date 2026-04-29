@@ -40,7 +40,7 @@ defmodule ObserverWeb.DashboardLive do
   end
 
   @impl true
-  def handle_info({:new_event, event}, %{assigns: %{paused: true}} = socket) do
+  def handle_info({:new_event, _event}, %{assigns: %{paused: true}} = socket) do
     # When paused, still store but don't update the visible list
     {:noreply, socket}
   end
