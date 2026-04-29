@@ -51,7 +51,13 @@ defmodule Adam.Loop do
 
     routines = Adam.Scheduler.check_routines()
 
-    if rem(iteration, 20) == 0, do: Adam.Compaction.check()
+    if rem(iteration, 20) == 0 do
+      summary_path = "/app/memory/summary.toon"
+      before_size = if File.exists?(summary_path), do: File.stat!(summary_path).size, else: 0
+      Adam.Compaction.check()
+      after_size = if File.exists?(summary_path), do: File.stat!(summary_path).size, else: 0
+      if after_size != before_size, do: Adam.Observer.memory_compact(before_size, after_size, iteration)
+    end
     if rem(iteration, 30) == 0, do: Adam.Speciation.check()
 
     psyche_state = Adam.Psyche.prepare(iteration)
@@ -60,7 +66,10 @@ defmodule Adam.Loop do
     tools = Adam.Tools.get_tools_for_llm(psyche_state.allowed_tools)
 
     tier = determine_tier(interrupts, routines)
+
+    Adam.Observer.context_built(system_prompt, context, psyche_state.allowed_tools, tier, iteration)
     thought = Adam.LLM.think(system_prompt, context, tools, tier: tier)
+    Adam.Observer.thought(thought.content, thought.tokens, thought.tier, thought.cost, length(thought.tool_calls), iteration)
 
     IO.puts("[THOUGHT] #{String.slice(thought.content, 0, 200)}")
 
@@ -70,6 +79,7 @@ defmodule Adam.Loop do
 
         Enum.each(results, fn r ->
           IO.puts("[TOOL] #{r.name}: #{String.slice(to_string(r.result), 0, 100)}")
+          Adam.Observer.tool_call(r.name, r.args, r.result, iteration, tier, r[:duration_ms] || 0)
         end)
 
         results
@@ -78,7 +88,12 @@ defmodule Adam.Loop do
       end
 
     Adam.Psyche.process(thought, tool_results)
+
+    exp_path = "/app/memory/experiences.toon"
+    old_size = if File.exists?(exp_path), do: File.stat!(exp_path).size, else: 0
     Adam.Compaction.log_thought(iteration, thought.content, tool_results)
+    new_size = if File.exists?(exp_path), do: File.stat!(exp_path).size, else: 0
+    Adam.Observer.memory_update(exp_path, old_size, new_size, iteration)
 
     balance = Adam.Safety.deduct_electricity(thought.cost)
     IO.puts("[BUDGET] $#{Float.round(balance, 2)} remaining (#{thought.tier})")
@@ -158,6 +173,7 @@ defmodule Adam.Loop do
         goal_text = if body != "", do: "#{goal}\n\n#{body}", else: goal
         File.write!("/app/prompts/goals.md", goal_text)
         IO.puts("[OWNER] Goal set: #{goal}")
+        Adam.Observer.goal_update(goal_text, 0)
 
       String.upcase(subject) |> String.starts_with?("BUDGET:") ->
         amount = subject |> String.replace(~r/^BUDGET:\s*/i, "") |> String.trim()
