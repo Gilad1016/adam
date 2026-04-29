@@ -131,9 +131,11 @@ def get_all_tools() -> dict:
     return tools
 
 
-def get_tools_for_llm() -> list[dict]:
+def get_tools_for_llm(allowed: set | None = None) -> list[dict]:
     result = []
     for name, tool in get_all_tools().items():
+        if allowed is not None and name not in allowed:
+            continue
         result.append({
             "type": "function",
             "function": {
@@ -144,9 +146,11 @@ def get_tools_for_llm() -> list[dict]:
     return result
 
 
-def get_tools_summary() -> str:
+def get_tools_summary(allowed: set | None = None) -> str:
     lines = []
     for name, tool in get_all_tools().items():
+        if allowed is not None and name not in allowed:
+            continue
         lines.append(f"- {name}: {tool['description']}")
     return "\n".join(lines)
 

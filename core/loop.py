@@ -6,7 +6,7 @@ import time
 import traceback
 import threading
 
-from core import llm, email_client, safety, checkpoint, toon, tools, scheduler, speciation, interrupts, compaction
+from core import llm, email_client, safety, checkpoint, toon, tools, scheduler, speciation, interrupts, compaction, psyche
 
 
 SPECIATION_INTERVAL = 50
@@ -51,6 +51,7 @@ def run():
     safety.init_budget()
     scheduler.init()
     interrupts.init()
+    psyche.init()
     _set_stage("loading-models")
     model_status = llm.ensure_models()
     print(f"[ADAM] Models: {model_status}")
@@ -81,6 +82,9 @@ def run():
             checkpoint.snapshot()
             last_checkpoint_time = time.time()
 
+        if iteration % 10 == 0:
+            psyche.emit_signals()
+
         _set_stage("deduct-electricity", iteration)
         safety.deduct_electricity(_last_thought_cost)
 
@@ -101,6 +105,7 @@ def _iterate(iteration: int):
         if intr["type"] == "owner_email":
             msg = intr["data"]
             _handle_owner_command(msg)
+            psyche.process_owner_email(msg)
             owner_messages.append(msg)
 
     # 2. CHECK SCHEDULED ROUTINES
@@ -127,7 +132,8 @@ def _iterate(iteration: int):
 
     # 5. LOAD CONTEXT
     _set_stage("building-context", iteration)
-    context = _build_context(iteration, active_interrupts, due_routines, skill_proposals)
+    psyche_state = psyche.prepare(iteration)
+    context = _build_context(iteration, active_interrupts, due_routines, skill_proposals, psyche_state)
     system_prompt = _load_system_prompt()
 
     # 6. DETERMINE TIER
@@ -136,7 +142,7 @@ def _iterate(iteration: int):
     # 7. THINK
     _set_stage("thinking", iteration)
     think_start = time.time()
-    thought = llm.think(system_prompt, context, tools.get_tools_for_llm(), tier=tier)
+    thought = llm.think(system_prompt, context, tools.get_tools_for_llm(psyche_state["allowed_tools"]), tier=tier)
     think_sec = time.time() - think_start
     print(f"[THOUGHT #{iteration}] [{tier} {think_sec:.1f}s] {thought['content'][:200]}")
 
@@ -163,10 +169,9 @@ def _iterate(iteration: int):
     _set_stage("logging-thought", iteration)
     _log_thought(iteration, thought, tool_results)
 
-    # 11. MEMORY NUDGE
-    _set_stage("memory-nudge", iteration)
-    if tool_results:
-        _memory_nudge(thought, tool_results)
+    # 11. PSYCHE PROCESSING
+    _set_stage("psyche-processing", iteration)
+    psyche.process(thought, tool_results)
 
     # 12. If idle, brief pause
     if not thought.get("tool_calls") and not thought.get("content", "").strip():
@@ -213,8 +218,13 @@ def _handle_owner_command(msg: dict):
 
 
 def _build_context(iteration: int, active_interrupts: list[dict],
-                   due_routines: list[dict], skill_proposals: list[dict]) -> str:
+                   due_routines: list[dict], skill_proposals: list[dict],
+                   psyche_state: dict | None = None) -> str:
     parts = []
+
+    # Psychological context (injected by psyche)
+    if psyche_state and psyche_state.get("context"):
+        parts.append(psyche_state["context"])
 
     # Interrupts (highest priority — in your face)
     if active_interrupts:
@@ -277,45 +287,11 @@ def _build_context(iteration: int, active_interrupts: list[dict],
         with open(self_model_path) as f:
             parts.append(f"== SELF MODEL ==\n{f.read()}\n== END SELF MODEL ==")
 
-    # Available tools
-    parts.append(f"== TOOLS ==\n{tools.get_tools_summary()}\n== END TOOLS ==")
+    # Available tools (filtered by developmental stage)
+    allowed = psyche_state.get("allowed_tools") if psyche_state else None
+    parts.append(f"== TOOLS ==\n{tools.get_tools_summary(allowed)}\n== END TOOLS ==")
 
     return "\n\n".join(parts)
-
-
-def _memory_nudge(thought: dict, tool_results: list[dict]):
-    has_significant_action = any(
-        r["tool"] in ("web_search", "web_read", "sandbox_run", "shell", "send_email")
-        for r in tool_results
-    )
-    if not has_significant_action:
-        return
-
-    nudge_context = (
-        f"You just completed these actions:\n"
-        + "\n".join(f"- {r['tool']}: {r['result'][:200]}" for r in tool_results)
-        + "\n\nAnything worth saving to knowledge (write_knowledge tool)? "
-        "If not, just say 'nothing to save'. Be selective — only save genuinely useful learnings."
-    )
-
-    nudge_thought = llm.think(
-        "You are ADAM. Decide if your recent work produced knowledge worth persisting. Be selective.",
-        nudge_context,
-        tools.get_tools_for_llm()
-    )
-
-    for tc in nudge_thought.get("tool_calls", []):
-        func = tc.get("function", {})
-        name = func.get("name", "")
-        if name == "write_knowledge":
-            args = func.get("arguments", {})
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except json.JSONDecodeError:
-                    continue
-            tools.execute_tool(name, args)
-            print(f"[NUDGE] Saved knowledge: {args.get('topic', '?')}")
 
 
 def _load_system_prompt() -> str:
