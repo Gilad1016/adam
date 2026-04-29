@@ -656,7 +656,7 @@ def _self_model_to_text() -> str:
     summary = state["self_model"].get("summary", "")
     if not summary:
         return ""
-    return f"== SELF MODEL ==\n{summary}\n== END SELF MODEL =="
+    return f"== SELF ==\n{summary}\n== END SELF =="
 
 
 def _track_owner_interaction(msg: dict):
@@ -709,12 +709,12 @@ def prepare(iteration: int) -> dict:
     # Drives
     drives_text = _drives_to_text()
     if drives_text:
-        parts.append(f"== PSYCHE — DRIVES ==\n{drives_text}\n== END DRIVES ==")
+        parts.append(f"== INTERNAL STATE ==\n{drives_text}\n== END INTERNAL STATE ==")
 
     # Time sense
     time_text = _time_sense_to_text()
     if time_text:
-        parts.append(f"== TIME SENSE ==\n{time_text}\n== END TIME SENSE ==")
+        parts.append(f"== TIME ==\n{time_text}\n== END TIME ==")
 
     # Self-model
     self_text = _self_model_to_text()
@@ -724,7 +724,7 @@ def prepare(iteration: int) -> dict:
     # Owner model
     owner_text = _owner_model_to_text()
     if owner_text:
-        parts.append(f"== OWNER MODEL ==\n{owner_text}\n== END OWNER MODEL ==")
+        parts.append(owner_text)
 
     # Surfaced memories (built from recent context)
     goals_path = "/app/prompts/goals.md"
@@ -793,9 +793,9 @@ def process_owner_email(msg: dict):
     _record_email_received()
     _track_owner_interaction(msg)
 
-    # Boost social drive sharply on owner contact
+    # Social need satisfied — owner responded, drive drops sharply
     state = get_state()
-    state["drives"]["social"] = _clamp(state["drives"]["social"] + 0.4)
+    state["drives"]["social"] = _clamp(state["drives"]["social"] * 0.3)
     _save()
 
     # Check if email contains a goal update
