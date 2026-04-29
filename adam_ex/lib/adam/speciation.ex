@@ -40,13 +40,27 @@ defmodule Adam.Speciation do
 
   defp load_thought_log do
     content = File.read!(@thought_log)
-    if String.trim(content) == "", do: [], else: Adam.Toon.decode(content) || []
+    if String.trim(content) == "" do
+      []
+    else
+      case Adam.Toon.decode(content) do
+        list when is_list(list) -> list
+        _ -> []
+      end
+    end
   end
 
   defp load_patterns do
     if File.exists?(@patterns_file) do
       content = File.read!(@patterns_file)
-      if String.trim(content) == "", do: [], else: Adam.Toon.decode(content) || []
+      if String.trim(content) == "" do
+        []
+      else
+        case Adam.Toon.decode(content) do
+          list when is_list(list) -> list
+          _ -> []
+        end
+      end
     else
       []
     end

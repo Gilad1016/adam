@@ -71,7 +71,14 @@ defmodule Adam.Compaction do
   defp load_entries do
     if File.exists?(@thought_log) do
       content = File.read!(@thought_log)
-      if String.trim(content) == "", do: [], else: Adam.Toon.decode(content) || []
+      if String.trim(content) == "" do
+        []
+      else
+        case Adam.Toon.decode(content) do
+          list when is_list(list) -> list
+          _ -> []
+        end
+      end
     else
       []
     end

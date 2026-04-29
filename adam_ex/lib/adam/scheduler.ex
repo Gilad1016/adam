@@ -63,7 +63,14 @@ defmodule Adam.Scheduler do
   defp load_routines do
     if File.exists?(@routines_file) do
       content = File.read!(@routines_file)
-      if String.trim(content) == "", do: [], else: Adam.Toon.decode(content) || []
+      if String.trim(content) == "" do
+        []
+      else
+        case Adam.Toon.decode(content) do
+          list when is_list(list) -> list
+          _ -> []
+        end
+      end
     else
       []
     end

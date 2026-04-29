@@ -85,14 +85,14 @@ defmodule Adam.Psyche do
 
   def process(thought, tool_results) do
     state = get_state()
-    history_len = length(get_in_state(state, ["self_model", "action_history"]) || [])
+    history_len = length(as_list(get_in_state(state, ["self_model", "action_history"])))
 
     Enum.each(tool_results, fn r ->
       track_action(r.name, r[:args] || %{}, to_string(r.result))
     end)
 
     state = get_state()
-    new_len = length(get_in_state(state, ["self_model", "action_history"]) || [])
+    new_len = length(as_list(get_in_state(state, ["self_model", "action_history"])))
 
     if div(new_len, @rebuild_interval) > div(history_len, @rebuild_interval) do
       rebuild_self_model()
@@ -179,7 +179,7 @@ defmodule Adam.Psyche do
     drives =
       if tool_results != nil and tool_results != [] do
         used_tools = MapSet.new(Enum.map(tool_results, & &1.name))
-        history = get_in_state(state, ["self_model", "action_history"]) || []
+        history = as_list(get_in_state(state, ["self_model", "action_history"]))
         history_tools = history |> Enum.take(-20) |> Enum.map(fn e -> e["tool"] || "" end) |> MapSet.new()
 
         curiosity = drives["curiosity"] || 0.5

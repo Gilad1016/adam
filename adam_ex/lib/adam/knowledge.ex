@@ -93,7 +93,14 @@ defmodule Adam.Knowledge do
   def load_index do
     if File.exists?(@index_file) do
       content = File.read!(@index_file)
-      if String.trim(content) == "", do: [], else: Adam.Toon.decode(content) || []
+      if String.trim(content) == "" do
+        []
+      else
+        case Adam.Toon.decode(content) do
+          list when is_list(list) -> list
+          _ -> []
+        end
+      end
     else
       []
     end
