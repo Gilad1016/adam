@@ -75,12 +75,15 @@ defmodule Adam.Loop do
 
     tool_results =
       if thought.tool_calls != [] do
-        results = Adam.Tools.execute_tool_calls(thought.tool_calls)
-
-        Enum.each(results, fn r ->
-          IO.puts("[TOOL] #{r.name}: #{String.slice(to_string(r.result), 0, 100)}")
-          Adam.Observer.tool_call(r.name, r.args, r.result, iteration, tier, r[:duration_ms] || 0)
-        end)
+        results =
+          Enum.map(thought.tool_calls, fn %{name: name, arguments: args} ->
+            t0 = System.monotonic_time(:millisecond)
+            result = Adam.Tools.execute(name, args)
+            duration_ms = System.monotonic_time(:millisecond) - t0
+            IO.puts("[TOOL] #{name}: #{String.slice(to_string(result), 0, 100)}")
+            Adam.Observer.tool_call(name, args, result, iteration, tier, duration_ms)
+            %{name: name, result: to_string(result)}
+          end)
 
         results
       else
