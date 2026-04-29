@@ -1,7 +1,7 @@
 defmodule Adam.Tools.Sandbox do
   @sandbox_dir "/app/sandbox"
 
-  def run_script(%{"code" => code, "language" => lang}) do
+  def run_script(%{"code" => code, "language" => lang}) when is_binary(code) and is_binary(lang) do
     File.mkdir_p!(@sandbox_dir)
     {ext, cmd} = runner_for(lang)
     script_path = Path.join(@sandbox_dir, "script#{ext}")
@@ -19,7 +19,9 @@ defmodule Adam.Tools.Sandbox do
     end
   end
 
-  def start_service(%{"name" => name, "command" => command}) do
+  def run_script(args), do: "[ERROR: sandbox_run requires 'code' and 'language' strings, got #{inspect(args)}]"
+
+  def start_service(%{"name" => name, "command" => command}) when is_binary(name) and is_binary(command) do
     File.mkdir_p!(@sandbox_dir)
     log_path = Path.join(@sandbox_dir, "#{name}.log")
     pid_path = Path.join(@sandbox_dir, "#{name}.pid")
@@ -38,7 +40,9 @@ defmodule Adam.Tools.Sandbox do
     end
   end
 
-  def stop_service(%{"name" => name}) do
+  def start_service(args), do: "[ERROR: sandbox_service_start requires 'name' and 'command', got #{inspect(args)}]"
+
+  def stop_service(%{"name" => name}) when is_binary(name) do
     pid_path = Path.join(@sandbox_dir, "#{name}.pid")
 
     if File.exists?(pid_path) do
@@ -51,14 +55,18 @@ defmodule Adam.Tools.Sandbox do
     end
   end
 
+  def stop_service(args), do: "[ERROR: sandbox_service_stop requires 'name', got #{inspect(args)}]"
+
   def list_services do
     File.mkdir_p!(@sandbox_dir)
 
     Path.wildcard(Path.join(@sandbox_dir, "*.pid"))
-    |> Enum.map(fn path ->
+    |> Enum.flat_map(fn path ->
       name = Path.basename(path, ".pid")
-      pid = File.read!(path) |> String.trim()
-      "#{name} (pid: #{pid})"
+      case File.read(path) do
+        {:ok, raw} -> ["#{name} (pid: #{String.trim(raw)})"]
+        _ -> []
+      end
     end)
     |> case do
       [] -> "no running services"
@@ -66,7 +74,7 @@ defmodule Adam.Tools.Sandbox do
     end
   end
 
-  def read_log(%{"name" => name}) do
+  def read_log(%{"name" => name}) when is_binary(name) do
     log_path = Path.join(@sandbox_dir, "#{name}.log")
 
     if File.exists?(log_path) do
@@ -76,7 +84,9 @@ defmodule Adam.Tools.Sandbox do
     end
   end
 
-  def install_package(%{"package" => package, "manager" => manager}) do
+  def read_log(args), do: "[ERROR: sandbox_log requires 'name', got #{inspect(args)}]"
+
+  def install_package(%{"package" => package, "manager" => manager}) when is_binary(package) and is_binary(manager) do
     cmd =
       case manager do
         "pip" -> "pip install #{package}"
@@ -91,7 +101,9 @@ defmodule Adam.Tools.Sandbox do
     end
   end
 
-  def create_project(%{"name" => name, "template" => template}) do
+  def install_package(args), do: "[ERROR: sandbox_install requires 'package' and 'manager', got #{inspect(args)}]"
+
+  def create_project(%{"name" => name, "template" => template}) when is_binary(name) and is_binary(template) do
     project_dir = Path.join(@sandbox_dir, name)
     File.mkdir_p!(project_dir)
 
@@ -112,6 +124,8 @@ defmodule Adam.Tools.Sandbox do
 
     "created project '#{name}' (#{template}) at sandbox/#{name}"
   end
+
+  def create_project(args), do: "[ERROR: sandbox_project requires 'name' and 'template', got #{inspect(args)}]"
 
   defp runner_for("python"), do: {".py", "python3"}
   defp runner_for("node"), do: {".js", "node"}

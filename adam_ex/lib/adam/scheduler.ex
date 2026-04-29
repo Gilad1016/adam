@@ -27,7 +27,8 @@ defmodule Adam.Scheduler do
     end)
   end
 
-  def add_routine(%{"name" => name, "interval_minutes" => interval, "action" => action}) do
+  def add_routine(%{"name" => name, "interval_minutes" => interval, "action" => action})
+      when is_binary(name) and is_integer(interval) and is_binary(action) do
     routines = load_routines()
     routines = Enum.reject(routines, &(&1["name"] == name))
 
@@ -42,11 +43,15 @@ defmodule Adam.Scheduler do
     "added routine '#{name}' every #{interval}m"
   end
 
-  def remove_routine(%{"name" => name}) do
+  def add_routine(args), do: "[ERROR: schedule_add requires 'name', 'interval_minutes' (int), 'action', got #{inspect(args)}]"
+
+  def remove_routine(%{"name" => name}) when is_binary(name) do
     routines = load_routines() |> Enum.reject(&(&1["name"] == name))
     save_routines(routines)
     "removed routine '#{name}'"
   end
+
+  def remove_routine(args), do: "[ERROR: schedule_remove requires 'name', got #{inspect(args)}]"
 
   def list_routines do
     case load_routines() do

@@ -1,5 +1,5 @@
 defmodule Adam.Tools.Web do
-  def search(%{"query" => query}) do
+  def search(%{"query" => query}) when is_binary(query) do
     case Req.get("https://html.duckduckgo.com/html/",
            params: [q: query],
            headers: [{"user-agent", "ADAM/1.0"}],
@@ -16,7 +16,9 @@ defmodule Adam.Tools.Web do
     end
   end
 
-  def read(%{"url" => url}) do
+  def search(args), do: "[ERROR: web_search requires 'query' string, got #{inspect(args)}]"
+
+  def read(%{"url" => url}) when is_binary(url) do
     case Req.get(url, headers: [{"user-agent", "ADAM/1.0"}], receive_timeout: 15_000) do
       {:ok, %{status: 200, body: body}} when is_binary(body) ->
         body
@@ -30,6 +32,8 @@ defmodule Adam.Tools.Web do
         "[WEB READ ERROR: #{inspect(err)}]"
     end
   end
+
+  def read(args), do: "[ERROR: web_read requires 'url' string, got #{inspect(args)}]"
 
   defp parse_ddg_results(html) do
     case Floki.parse_document(html) do

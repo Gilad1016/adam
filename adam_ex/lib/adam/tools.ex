@@ -125,7 +125,7 @@ defmodule Adam.Tools do
     end
   end
 
-  defp modify_prompt(%{"file" => file, "content" => content}) do
+  defp modify_prompt(%{"file" => file, "content" => content}) when is_binary(file) and is_binary(content) do
     allowed = ["system.md", "goals.md"]
 
     if file in allowed do
@@ -137,7 +137,10 @@ defmodule Adam.Tools do
     end
   end
 
-  defp create_tool(%{"name" => name, "description" => desc, "code" => code}) do
+  defp modify_prompt(args), do: "[ERROR: modify_prompt requires 'file' and 'content', got #{inspect(args)}]"
+
+  defp create_tool(%{"name" => name, "description" => desc, "code" => code})
+       when is_binary(name) and is_binary(desc) and is_binary(code) do
     File.mkdir_p!("/app/tools")
     path = Path.join("/app/tools", "#{name}.exs")
 
@@ -164,10 +167,14 @@ defmodule Adam.Tools do
     end
   end
 
-  defp escalate(%{"reason" => reason} = args) do
-    details = Map.get(args, "details", "")
+  defp create_tool(args), do: "[ERROR: create_tool requires 'name', 'description', 'code', got #{inspect(args)}]"
+
+  defp escalate(%{"reason" => reason} = args) when is_binary(reason) do
+    details = Map.get(args, "details", "") |> to_string()
     subject = "[ADAM ESCALATION] #{reason}"
     body = "Reason: #{reason}\n\nDetails: #{details}"
     Adam.Tools.Email.send(%{"subject" => subject, "body" => body})
   end
+
+  defp escalate(args), do: "[ERROR: escalate requires 'reason', got #{inspect(args)}]"
 end

@@ -47,21 +47,30 @@ defmodule Adam.Interrupts do
     {:reply, has_alarms, state}
   end
 
-  def handle_call({:add_alarm, %{"name" => name, "minutes" => minutes} = args}, _from, state) do
-    message = Map.get(args, "message", "alarm fired")
+  def handle_call({:add_alarm, %{"name" => name, "minutes" => minutes} = args}, _from, state)
+      when is_binary(name) and is_integer(minutes) do
+    message = Map.get(args, "message", "alarm fired") |> to_string()
     fire_at = System.os_time(:second) + minutes * 60
     alarm = %{fire_at: fire_at, message: message}
     state = %{state | alarms: Map.put(state.alarms, name, alarm)}
     {:reply, "alarm '#{name}' set for #{minutes} minutes", state}
   end
 
-  def handle_call({:remove_alarm, %{"name" => name}}, _from, state) do
+  def handle_call({:add_alarm, args}, _from, state) do
+    {:reply, "[ERROR: set_alarm requires 'name' string and 'minutes' integer, got #{inspect(args)}]", state}
+  end
+
+  def handle_call({:remove_alarm, %{"name" => name}}, _from, state) when is_binary(name) do
     if Map.has_key?(state.alarms, name) do
       state = %{state | alarms: Map.delete(state.alarms, name)}
       {:reply, "removed alarm '#{name}'", state}
     else
       {:reply, "[ERROR: alarm '#{name}' not found]", state}
     end
+  end
+
+  def handle_call({:remove_alarm, args}, _from, state) do
+    {:reply, "[ERROR: remove_alarm requires 'name' string, got #{inspect(args)}]", state}
   end
 
   def handle_call(:list_alarms, _from, state) do
