@@ -15,11 +15,16 @@ defmodule Observer.Watcher do
     path = Application.get_env(:observer, :events_file, "/app/observer/events.jsonl")
     interval = Application.get_env(:observer, :poll_interval_ms, 500)
 
-    File.mkdir_p!(Path.dirname(path))
-    unless File.exists?(path), do: File.write!(path, "")
+    # Observer mounts the events file read-only. We don't create it here —
+    # ADAM will create it on its first write. We just tail it.
+    {events, pos} =
+      if File.exists?(path) do
+        read_from(path, 0)
+      else
+        Logger.info("[Observer.Watcher] Waiting for events file at #{path}")
+        {[], 0}
+      end
 
-    # Load any events that already exist on startup
-    {events, pos} = read_from(path, 0)
     Enum.each(events, &store_and_broadcast/1)
 
     send(self(), :poll)
