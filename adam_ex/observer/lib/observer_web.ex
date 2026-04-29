@@ -17,7 +17,8 @@ defmodule ObserverWeb do
 
   defp html_helpers do
     quote do
-      use Phoenix.HTML
+      import Phoenix.HTML
+      import Phoenix.HTML.Form
       import Phoenix.Component
     end
   end
