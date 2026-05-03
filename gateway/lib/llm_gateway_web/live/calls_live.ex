@@ -33,6 +33,10 @@ defmodule LlmGatewayWeb.CallsLive do
     end
   end
 
+  def handle_info(:calls_wiped, socket) do
+    {:noreply, socket |> assign(:expanded, MapSet.new()) |> load_page(1)}
+  end
+
   @impl true
   def handle_event("toggle", %{"id" => id}, socket) do
     id = String.to_integer(id)
