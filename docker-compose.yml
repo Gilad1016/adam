@@ -12,11 +12,38 @@ services:
       - ollama_data:/root/.ollama
     ports:
       - "11434:11434"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  ollama-init:
+    image: ollama/ollama
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - ADAM_THINKER_MODEL=${ADAM_THINKER_MODEL:-gemma4:e4b}
+      - ADAM_ACTOR_MODEL=${ADAM_ACTOR_MODEL:-hermes3:8b}
+      - ADAM_DEEP_MODEL=${ADAM_DEEP_MODEL:-gemma3:12b}
+      - ADAM_EMBED_MODEL=${ADAM_EMBED_MODEL:-nomic-embed-text}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        for model in "$ADAM_THINKER_MODEL" "$ADAM_ACTOR_MODEL" "$ADAM_DEEP_MODEL" "$ADAM_EMBED_MODEL"; do
+          echo "Pulling $$model...";
+          ollama pull "$$model" || echo "WARNING: failed to pull $$model";
+        done
+    restart: "no"
 
   adam:
     build: .
     depends_on:
-      - ollama
+      ollama-init:
+        condition: service_completed_successfully
     environment:
       - OLLAMA_URL=http://ollama:11434
       - ADAM_OBSERVER_MODE=${ADAM_OBSERVER_MODE:-partial}   # off | partial | full

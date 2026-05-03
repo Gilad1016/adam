@@ -1,6 +1,5 @@
 defmodule Adam.Embeddings do
   @embeddings_file "/app/knowledge/_embeddings.json"
-  @embed_model "nomic-embed-text"
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -12,7 +11,7 @@ defmodule Adam.Embeddings do
   """
   def embed(text) when is_binary(text) do
     url = ollama_url() <> "/api/embed"
-    body = %{model: @embed_model, input: text}
+    body = %{model: Application.get_env(:adam, :embed_model, "nomic-embed-text"), input: text}
 
     case Req.post(url, json: body, receive_timeout: 30_000) do
       {:ok, %{status: 200, body: %{"embeddings" => [vector | _]}}} when is_list(vector) ->
