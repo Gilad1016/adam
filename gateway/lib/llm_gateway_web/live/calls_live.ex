@@ -116,6 +116,16 @@ defmodule LlmGatewayWeb.CallsLive do
       </div>
 
       <div class="space-y-1">
+        <div class="grid grid-cols-12 gap-2 text-[10px] uppercase tracking-wider text-gray-500 px-3 py-2 border-b border-gray-800 mb-1">
+          <span class="col-span-2">time</span>
+          <span class="col-span-1">kind</span>
+          <span class="col-span-2">model</span>
+          <span class="col-span-1">status</span>
+          <span class="col-span-1">duration</span>
+          <span class="col-span-1">tokens</span>
+          <span class="col-span-1">tools</span>
+          <span class="col-span-3">preview</span>
+        </div>
         <%= if @calls == [] do %>
           <div class="text-gray-500 text-sm italic p-6 border border-gray-800 rounded text-center">
             No calls logged yet. Once ADAM starts thinking, calls will appear here.

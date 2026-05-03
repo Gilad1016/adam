@@ -93,7 +93,7 @@ defmodule Adam.Compaction do
 
     prompt = base_instruction <> anchor_text
 
-    result = Adam.LLM.think(prompt, context, [], tier: "thinker")
+    result = Adam.LLM.think(prompt, context, [], tier: "thinker", kind: "infra.compact")
     result.content
   end
 
