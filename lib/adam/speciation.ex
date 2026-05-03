@@ -23,6 +23,32 @@ defmodule Adam.Speciation do
     end
   end
 
+  @doc """
+  Returns a nudge string to inject into ADAM's context when repeated tool patterns are detected.
+  Returns empty string if no patterns worth nudging about.
+  """
+  def pattern_nudge do
+    patterns = load_patterns()
+
+    # Find patterns seen enough times to warrant a tool
+    nudge_worthy =
+      patterns
+      |> Enum.filter(fn p -> (p["count"] || 0) >= 5 end)
+      |> Enum.sort_by(fn p -> p["count"] || 0 end, :desc)
+      |> Enum.take(3)
+
+    if nudge_worthy == [] do
+      ""
+    else
+      lines = ["== PATTERN NUDGE =="]
+      lines = lines ++ Enum.map(nudge_worthy, fn p ->
+        "You've used the tool sequence [#{p["signature"]}] #{p["count"]} times. Consider building a tool for this pattern."
+      end)
+      lines = lines ++ ["== END PATTERN NUDGE =="]
+      Enum.join(lines, "\n")
+    end
+  end
+
   defp detect_patterns(entries) do
     entries
     |> Enum.map(fn e -> e["tools"] || "" end)

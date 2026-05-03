@@ -29,7 +29,9 @@ defmodule Adam.Knowledge do
 
     # Generate and persist a vector embedding for this entry (best-effort).
     embed_text = "#{topic} #{content}"
-    Task.start(fn -> Adam.Embeddings.embed_and_store(id, embed_text) end)
+    Task.Supervisor.start_child(Adam.TaskSupervisor, fn ->
+      Adam.Embeddings.embed_and_store(id, embed_text)
+    end)
 
     "stored knowledge '#{topic}' (id: #{id})"
   end

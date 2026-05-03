@@ -193,15 +193,17 @@ defmodule Adam.Sleep do
 
   defp reset_tiredness do
     try do
+      budget = Adam.Safety.load_budget()
+      total_spent = budget["total_spent"] || 0.0
+      now = System.os_time(:second)
+
       state = Adam.Psyche.get_state()
-      state = Map.put(state, "tiredness_accumulator", 0.0)
-      state = Map.put(state, "last_consolidation_time", System.os_time(:second))
-
-      # Also reduce valence_history weight so tiredness recomputes as low
-      vh = (state["valence_history"] || [])
-           |> Enum.take(-5)  # keep only the very recent ones post-sleep
-
-      state = Map.put(state, "valence_history", vh)
+      state = state
+        |> Map.put("tiredness_accumulator", 0.0)
+        |> Map.put("last_consolidation_time", now)
+        |> Map.put("wake_time", now)
+        |> Map.put("baseline_spent", total_spent)
+        |> Map.put("valence_history", Enum.take(state["valence_history"] || [], -5))
 
       Adam.Psyche.save_state(state)
     rescue

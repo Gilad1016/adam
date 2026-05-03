@@ -171,33 +171,48 @@ defmodule Adam.Loop do
   end
 
   defp handle_owner_email(msg) do
-    subject = msg["subject"] || ""
-    body = msg["body"] || ""
-    cond do
-      String.upcase(subject) |> String.starts_with?("GOAL:") ->
-        goal = String.trim_leading(subject, "GOAL:") |> String.trim_leading("goal:") |> String.trim()
-        goal_text = if body != "", do: "#{goal}\n\n#{body}", else: goal
-        File.write!("/app/prompts/goals.md", goal_text)
-        IO.puts("[OWNER] Goal set: #{goal}")
-        Adam.Observer.goal_update(goal_text, 0)
+    owner_email = System.get_env("OWNER_EMAIL", "") |> String.downcase() |> String.trim()
+    sender = (msg["from"] || "") |> String.downcase() |> String.trim()
 
-      String.upcase(subject) |> String.starts_with?("BUDGET:") ->
-        amount = subject |> String.replace(~r/^BUDGET:\s*/i, "") |> String.trim()
-        case Float.parse(amount) do
-          {val, _} ->
-            budget = Adam.Safety.load_budget()
-            budget = Map.merge(budget, %{"balance" => budget["balance"] + val, "initial" => budget["initial"] + val})
-            Adam.Safety.save_budget(budget)
-            IO.puts("[OWNER] Budget added: $#{val}")
-          _ ->
-            IO.puts("[OWNER] Invalid budget amount: #{amount}")
-        end
+    # Only process commands from the owner
+    if owner_email != "" and not String.contains?(sender, owner_email) do
+      IO.puts("[OWNER] Ignoring command from non-owner: #{sender}")
+      :ok
+    else
+      subject = msg["subject"] || ""
+      body = msg["body"] || ""
+      cond do
+        String.upcase(subject) |> String.starts_with?("GOAL:") ->
+          goal = subject
+            |> String.replace_prefix("GOAL:", "")
+            |> String.replace_prefix("goal:", "")
+            |> String.trim()
+          goal_text = if body != "", do: "#{goal}\n\n#{body}", else: goal
+          File.write!("/app/prompts/goals.md", goal_text)
+          IO.puts("[OWNER] Goal set: #{goal}")
+          Adam.Observer.goal_update(goal_text, 0)
 
-      String.upcase(subject) |> String.starts_with?("STAGE:") ->
-        Adam.Psyche.advance_stage()
+        String.upcase(subject) |> String.starts_with?("BUDGET:") ->
+          amount = subject
+            |> String.replace_prefix("BUDGET:", "")
+            |> String.replace_prefix("budget:", "")
+            |> String.trim()
+          case Float.parse(amount) do
+            {val, _} ->
+              budget = Adam.Safety.load_budget()
+              budget = Map.merge(budget, %{"balance" => budget["balance"] + val, "initial" => budget["initial"] + val})
+              Adam.Safety.save_budget(budget)
+              IO.puts("[OWNER] Budget added: $#{val}")
+            _ ->
+              IO.puts("[OWNER] Invalid budget amount: #{amount}")
+          end
 
-      true ->
-        :ok
+        String.upcase(subject) |> String.starts_with?("STAGE:") ->
+          Adam.Psyche.advance_stage()
+
+        true ->
+          :ok
+      end
     end
   end
 

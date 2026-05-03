@@ -3,6 +3,8 @@ defmodule Adam do
 
   def start(_type, _args) do
     children = [
+      {Task.Supervisor, name: Adam.TaskSupervisor},
+      Adam.Psyche,
       Adam.Interrupts,
       Adam.Loop,
       {Adam.Curator.Supervisor, []}

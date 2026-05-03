@@ -1,4 +1,6 @@
 defmodule Adam.Psyche do
+  use Agent
+
   @psyche_file "/app/memory/psyche.toon"
   @signals_file "/app/memory/maturity_signals.toon"
   @rebuild_interval 50
@@ -28,7 +30,17 @@ defmodule Adam.Psyche do
   defp as_list(v) when is_list(v), do: v
   defp as_list(_), do: []
 
+  def start_link(_) do
+    state = load_or_default()
+    Agent.start_link(fn -> state end, name: __MODULE__)
+  end
+
   def init do
+    :ok
+  end
+
+  defp load_or_default do
+    now = System.os_time(:second)
     state =
       if File.exists?(@psyche_file) do
         try do
@@ -40,29 +52,19 @@ defmodule Adam.Psyche do
         default_state()
       end
 
-    # Ensure tiredness fields are present for agents upgrading from older state files
-    now = System.os_time(:second)
-    state =
-      state
-      |> Map.put_new("started_at", now)
-      |> Map.put_new("tiredness_accumulator", 0.0)
-      |> Map.put_new("last_consolidation_time", 0)
+    budget = try do Adam.Safety.load_budget() rescue _ -> %{"total_spent" => 0.0} end
+    total_spent = budget["total_spent"] || 0.0
 
-    save(state)
+    state
+    |> Map.put("wake_time", now)
+    |> Map.put("baseline_spent", total_spent)
+    |> Map.put_new("started_at", now)
+    |> Map.put_new("tiredness_accumulator", 0.0)
+    |> Map.put_new("last_consolidation_time", 0)
   end
 
   def get_state do
-    if File.exists?(@psyche_file) do
-      try do
-        @psyche_file |> File.read!() |> Adam.Toon.decode()
-      rescue
-        _ -> default_state()
-      end
-    else
-      state = default_state()
-      save(state)
-      state
-    end
+    Agent.get(__MODULE__, & &1)
   end
 
   def prepare(_iteration) do
@@ -98,6 +100,9 @@ defmodule Adam.Psyche do
 
     anchors_text = anchors_to_text(state)
     parts = if anchors_text != "", do: parts ++ [anchors_text], else: parts
+
+    nudge_text = Adam.Speciation.pattern_nudge()
+    parts = if nudge_text != "", do: parts ++ [nudge_text], else: parts
 
     context = Enum.join(parts, "\n\n")
     allowed_tools = get_available_tools()
@@ -201,16 +206,17 @@ defmodule Adam.Psyche do
     try do
       budget = Adam.Safety.load_budget()
       total_spent = budget["total_spent"] || 0.0
-      last_deduction = budget["last_deduction"] || System.os_time(:second)
 
       state = get_state()
-      started_at = state["started_at"] || last_deduction
+      wake_time = state["wake_time"] || System.os_time(:second)
+      baseline_spent = state["baseline_spent"] || 0.0
       now = System.os_time(:second)
 
-      seconds_since_start = max(now - started_at, 1)
-      hours_since_start = seconds_since_start / 3600.0
+      seconds_awake = max(now - wake_time, 1)
+      hours_awake = seconds_awake / 3600.0
 
-      budget_rate = total_spent / hours_since_start
+      spend_this_cycle = max(total_spent - baseline_spent, 0.0)
+      budget_rate = spend_this_cycle / hours_awake
       budget_rate_weight = clamp(budget_rate / max(@max_hourly_budget, 0.01))
 
       vh = as_list(state["valence_history"])
@@ -1173,6 +1179,8 @@ defmodule Adam.Psyche do
       "stage" => 0,
       "stage_entered" => now,
       "started_at" => now,
+      "wake_time" => now,
+      "baseline_spent" => 0.0,
       "tiredness_accumulator" => 0.0,
       "last_consolidation_time" => 0,
       "drives" => %{
@@ -1208,6 +1216,7 @@ defmodule Adam.Psyche do
   end
 
   defp save(state) do
+    Agent.update(__MODULE__, fn _ -> state end)
     File.mkdir_p!(Path.dirname(@psyche_file))
     File.write!(@psyche_file, Adam.Toon.encode(state))
   end
