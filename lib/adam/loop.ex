@@ -85,15 +85,10 @@ defmodule Adam.Loop do
     user_content = build_context(psyche_state, interrupts, routines, iteration)
     tools = Adam.Tools.get_tools_for_llm(psyche_state.allowed_tools)
 
-    tier = determine_tier(interrupts, routines)
-
     messages = state.messages ++ [%{role: "user", content: user_content}]
 
     thought =
-      Adam.LLM.think_messages(system_prompt, messages, tools,
-        tier: tier,
-        kind: "agent.think"
-      )
+      Adam.LLM.think_messages(system_prompt, messages, tools, kind: "agent.think")
 
     IO.puts("[THOUGHT] #{String.slice(thought.content, 0, 200)}")
 
@@ -128,7 +123,7 @@ defmodule Adam.Loop do
     Adam.Compaction.check()
 
     balance = Adam.Safety.deduct_electricity(thought.cost)
-    IO.puts("[BUDGET] $#{Float.round(balance, 2)} remaining (#{thought.tier})")
+    IO.puts("[BUDGET] $#{Float.round(balance, 2)} remaining")
 
     if balance <= 0 do
       IO.puts("[ADAM] Budget exhausted. Shutting down.")
@@ -214,15 +209,6 @@ defmodule Adam.Loop do
       end
 
     Enum.join(parts, "\n\n")
-  end
-
-  defp determine_tier(interrupts, routines) do
-    cond do
-      Enum.any?(interrupts, &String.contains?(&1, "[EMAIL")) -> "actor"
-      interrupts != [] -> "actor"
-      routines != [] -> "actor"
-      true -> "thinker"
-    end
   end
 
   # Returns true if the action changed context meaningfully (e.g. new goal),

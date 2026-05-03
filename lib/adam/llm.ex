@@ -4,8 +4,7 @@ defmodule Adam.LLM do
   end
 
   def think_messages(system_prompt, messages, tools \\ [], opts \\ []) when is_list(messages) do
-    tier = Keyword.get(opts, :tier, "thinker")
-    model = model_for_tier(tier)
+    model = model()
     kind = Keyword.get(opts, :kind, "agent.think")
 
     full = [%{role: "system", content: system_prompt} | messages]
@@ -22,21 +21,18 @@ defmodule Adam.LLM do
            receive_timeout: 600_000
          ) do
       {:ok, %{status: 200, body: resp}} ->
-        parse_response(resp, tier)
+        parse_response(resp)
 
       {:ok, %{status: status}} ->
-        %{content: "[LLM ERROR: status #{status}]", tool_calls: [], tokens: 0, tier: tier, cost: cost_for_tier(tier)}
+        %{content: "[LLM ERROR: status #{status}]", tool_calls: [], tokens: 0, cost: cost()}
 
       {:error, err} ->
-        %{content: "[LLM ERROR: #{inspect(err)}]", tool_calls: [], tokens: 0, tier: tier, cost: cost_for_tier(tier)}
+        %{content: "[LLM ERROR: #{inspect(err)}]", tool_calls: [], tokens: 0, cost: cost()}
     end
   end
 
   def ensure_models do
-    models = [
-      Application.get_env(:adam, :thinker_model),
-      Application.get_env(:adam, :actor_model)
-    ]
+    models = [Application.get_env(:adam, :model)]
 
     results =
       Enum.map(models, fn model ->
@@ -60,7 +56,7 @@ defmodule Adam.LLM do
     Enum.join(results, ", ")
   end
 
-  defp parse_response(resp, tier) do
+  defp parse_response(resp) do
     message = resp["message"] || %{}
     content = message["content"] || ""
     tool_calls =
@@ -73,8 +69,7 @@ defmodule Adam.LLM do
       content: content,
       tool_calls: tool_calls,
       tokens: tokens,
-      tier: tier,
-      cost: cost_for_tier(tier)
+      cost: cost()
     }
   end
 
@@ -95,13 +90,13 @@ defmodule Adam.LLM do
   defp maybe_parse_inline_tool_calls([], content) when is_binary(content) do
     case extract_json_object(content) do
       {:ok, %{"name" => name, "arguments" => args}} when is_binary(name) ->
-        [%{name: name, arguments: normalize_args(args)}]
+        [%{name: name, arguments: args || %{}}]
 
       {:ok, %{"function" => %{"name" => name, "arguments" => args}}} when is_binary(name) ->
-        [%{name: name, arguments: normalize_args(args)}]
+        [%{name: name, arguments: args || %{}}]
 
       {:ok, %{"tool" => name, "arguments" => args}} when is_binary(name) ->
-        [%{name: name, arguments: normalize_args(args)}]
+        [%{name: name, arguments: args || %{}}]
 
       _ ->
         []
@@ -110,33 +105,14 @@ defmodule Adam.LLM do
 
   defp maybe_parse_inline_tool_calls([], _), do: []
 
-  # Tools expect args as a map with string keys. Normalize defensively so the
-  # inline path never hands a string/list/nil to `Adam.Tools.execute/2`, which
-  # would propagate through the loop and could crash downstream pattern matches.
-  defp normalize_args(nil), do: %{}
-  defp normalize_args(args) when is_map(args), do: args
-
-  defp normalize_args(args) when is_binary(args) do
-    case Jason.decode(args) do
-      {:ok, %{} = m} -> m
-      _ -> %{"raw" => args}
-    end
-  end
-
-  defp normalize_args(_), do: %{}
-
   defp extract_json_object(content) do
-    try do
-      case :binary.match(content, "{") do
-        :nomatch ->
-          :error
+    case :binary.match(content, "{") do
+      :nomatch ->
+        :error
 
-        {start, _} ->
-          rest = binary_part(content, start, byte_size(content) - start)
-          try_decode_balanced(rest)
-      end
-    rescue
-      _ -> :error
+      {start, _} ->
+        rest = binary_part(content, start, byte_size(content) - start)
+        try_decode_balanced(rest)
     end
   end
 
@@ -158,11 +134,9 @@ defmodule Adam.LLM do
   defp maybe_add_tools(body, []), do: body
   defp maybe_add_tools(body, tools), do: Map.put(body, :tools, tools)
 
-  defp model_for_tier("actor"), do: Application.get_env(:adam, :actor_model)
-  defp model_for_tier(_), do: Application.get_env(:adam, :thinker_model)
+  defp model, do: Application.get_env(:adam, :model)
 
-  defp cost_for_tier("actor"), do: Application.get_env(:adam, :actor_cost)
-  defp cost_for_tier(_), do: Application.get_env(:adam, :thinker_cost)
+  defp cost, do: Application.get_env(:adam, :cost)
 
   defp ollama_url, do: Application.get_env(:adam, :ollama_url)
 end

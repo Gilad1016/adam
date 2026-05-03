@@ -43,7 +43,7 @@ It thinks in a loop. Each thought costs electricity — and it knows that. It ma
 | **Communication** | Chat interface | Emails you like a colleague |
 | **Pacing** | As fast as possible | Manages its own energy budget |
 | **Corruption protection** | None | Immutable core + checkpoints + safe mode |
-| **Models** | One model | Three-tier: thinker (fast/cheap), actor (tool specialist), deep (complex reasoning) |
+| **Models** | Cloud frontier model | Single local model (qwen3:8b) — reasons and calls tools in one shot |
 
 ## The philosophy
 
@@ -69,8 +69,7 @@ When it repeats the same action pattern three times, the system nudges it: *"You
 │                                                     │
 │   3. THINK                                          │
 │      One LLM call = one thought                     │
-│      Thinker model (fast) by default                │
-│      Deep model for hard problems                   │
+│      Single local model reasons + emits tool calls  │
 │                                                     │
 │   4. ACT                                            │
 │      Execute tool calls from the thought            │
@@ -80,24 +79,18 @@ When it repeats the same action pattern three times, the system nudges it: *"You
 │      Nudge: "anything worth saving to knowledge?"   │
 │                                                     │
 │   6. PAY                                            │
-│      Deduct electricity cost (varies by model)      │
+│      Deduct electricity cost (fixed per call)       │
 │                                                     │
 │   └──→ repeat forever                               │
 │                                                     │
 └─────────────────────────────────────────────────────┘
 ```
 
-### The three brains
+### The model
 
-| Brain | Model | When | Cost |
-|---|---|---|---|
-| **Thinker** | qwen3:4b | Everyday reasoning, planning, reflection | $ |
-| **Actor** | qwen3:8b | Tool calls, structured output, precise actions | $$ |
-| **Deep** | qwen3:14b | Complex problems, self-modification, owner emails | $$$ |
+ADAM runs a single local model — `qwen3:8b` by default — for every thought. The same call both reasons through the situation and emits any tool calls. Modern small models handle that combined load cleanly, so there's no need for separate "thinker" and "actor" tiers.
 
-ADAM uses the cheap brain by default. It can `escalate` to the deep brain when it needs to — and it pays for it.
-
-All three brains are from the Qwen3 dense model family — chosen because dense models support LoRA fine-tuning, enabling the Sleep system below.
+Configurable via `ADAM_MODEL` in `.env`. Bump to a larger Qwen3 dense tag (e.g. `qwen3:14b`) on a card with more VRAM. Dense models are required because the Sleep system below fine-tunes via LoRA.
 
 ### The Digital Psyche
 
@@ -278,7 +271,7 @@ adam/
 │   ├── adam/
 │   │   ├── loop.ex             # The heartbeat (brainstem)
 │   │   ├── psyche.ex           # Digital psyche — drives, memory, development, identity
-│   │   ├── llm.ex              # Three-tier model system (thinker / actor / deep)
+│   │   ├── llm.ex              # Ollama client — one call, one model
 │   │   ├── tools.ex            # Stage-gated tool registry
 │   │   ├── tools/              # Tool implementations
 │   │   │   ├── shell.ex        #   Shell execution

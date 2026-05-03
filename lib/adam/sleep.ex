@@ -230,8 +230,7 @@ defmodule Adam.Sleep do
     File.write!(trigger_file, Jason.encode!(%{
       "requested_at" => System.os_time(:second),
       "training_data" => @training_data_file,
-      "thinker_model" => Application.get_env(:adam, :thinker_model),
-      "actor_model" => Application.get_env(:adam, :actor_model)
+      "model" => Application.get_env(:adam, :model)
     }))
     IO.puts("[SLEEP] Fine-tuning requested (#{trigger_file})")
   end
