@@ -44,8 +44,42 @@ defmodule Adam.Tuning do
 
   @tuning_file "/app/memory/tuning.toon"
   @history_file "/app/memory/tuning_history.toon"
+  @registry_file "/app/memory/tuning_knobs.toon"
 
   def knobs, do: @knobs
+
+  @doc """
+  Dump the knob registry to disk so external services (e.g. the gateway admin
+  page) that can't import this module can still see defaults, bounds, and
+  descriptions. Called from `Adam.start/2` on boot.
+
+  Each knob entry includes a `validator_present` flag — true for knobs whose
+  acceptance depends on a runtime validator (e.g. drive-weight vectors).
+  External writers must treat `validator_present: true` knobs as read-only
+  beyond rollback/restore-default.
+  """
+  def dump_registry do
+    payload = %{
+      "knobs" =>
+        for {name, spec} <- @knobs, into: %{} do
+          {Atom.to_string(name),
+           %{
+             "default" => spec.default,
+             "min" => Map.get(spec, :min),
+             "max" => Map.get(spec, :max),
+             "stability_hours" => spec.stability_hours,
+             "desc" => spec.desc,
+             "validator_present" => Map.get(spec, :validator, false) != false
+           }}
+        end
+    }
+
+    File.mkdir_p!(Path.dirname(@registry_file))
+    File.write!(@registry_file, Adam.Toon.encode(payload))
+    :ok
+  rescue
+    _ -> :error
+  end
 
   @doc "Read the current value for a knob — override or default."
   def get(name, fallback \\ nil) do
