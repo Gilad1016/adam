@@ -17,7 +17,7 @@ defmodule Adam.Seed do
     updated = Enum.take(existing ++ [entry], -20)
 
     File.mkdir_p!(Path.dirname(@sleep_log_file))
-    File.write!(@sleep_log_file, Adam.Toon.encode(updated))
+    Adam.AtomicFile.write!(@sleep_log_file, Adam.Toon.encode(updated))
 
     IO.puts("[SEED] Sleep recorded: #{consolidated_count} memories consolidated, #{training_examples} training examples")
   end

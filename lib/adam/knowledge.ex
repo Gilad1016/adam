@@ -22,7 +22,7 @@ defmodule Adam.Knowledge do
     }
 
     entry_path = Path.join(@knowledge_dir, "#{id}.toon")
-    File.write!(entry_path, Adam.Toon.encode(entry))
+    Adam.AtomicFile.write!(entry_path, Adam.Toon.encode(entry))
 
     index_entry = %{"id" => id, "topic" => topic, "tags" => Enum.join(tags, ";"), "updated" => now}
     save_index([index_entry | index])
@@ -71,7 +71,7 @@ defmodule Adam.Knowledge do
     if File.exists?(path) do
       entry = path |> File.read!() |> Adam.Toon.decode()
       entry = Map.merge(entry, %{"content" => content, "updated" => System.os_time(:second)})
-      File.write!(path, Adam.Toon.encode(entry))
+      Adam.AtomicFile.write!(path, Adam.Toon.encode(entry))
 
       index =
         load_index()
@@ -113,7 +113,7 @@ defmodule Adam.Knowledge do
   end
 
   defp save_index(index) do
-    File.write!(@index_file, Adam.Toon.encode(index))
+    Adam.AtomicFile.write!(@index_file, Adam.Toon.encode(index))
   end
 
   defp generate_id do

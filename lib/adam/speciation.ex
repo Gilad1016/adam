@@ -68,6 +68,6 @@ defmodule Adam.Speciation do
 
   defp save_patterns(patterns) do
     File.mkdir_p!(Path.dirname(@patterns_file))
-    File.write!(@patterns_file, Adam.Toon.encode(patterns))
+    Adam.AtomicFile.write!(@patterns_file, Adam.Toon.encode(patterns))
   end
 end

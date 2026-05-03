@@ -119,7 +119,7 @@ defmodule Adam.Tuning do
     }
 
     File.mkdir_p!(Path.dirname(@registry_file))
-    File.write!(@registry_file, Adam.Toon.encode(payload))
+    Adam.AtomicFile.write!(@registry_file, Adam.Toon.encode(payload))
     :ok
   rescue
     _ -> :error
@@ -213,9 +213,20 @@ defmodule Adam.Tuning do
           "source" => Atom.to_string(source),
           "ts" => System.os_time(:second)
         })
+        IO.puts(
+          "[TUNING] #{Atom.to_string(name)}: #{format_change(previous)} -> #{format_change(value)} " <>
+            "(source: #{Atom.to_string(source)}, reason: #{reason})"
+        )
         {:ok, value}
     end
   end
+
+  # Compact representation for log output. Maps render as `<map:N keys>` so
+  # personality-vector swaps don't dump huge inline JSON into the console.
+  defp format_change(v) when is_number(v), do: to_string(v)
+  defp format_change(v) when is_binary(v), do: inspect(v)
+  defp format_change(v) when is_map(v), do: "<map:#{map_size(v)} keys>"
+  defp format_change(v), do: inspect(v)
 
   # Validated knobs (custom validator) take precedence over scalar bounds.
   defp value_ok?(value, %{validator: f}) when is_function(f, 1), do: f.(value) == true
@@ -257,7 +268,7 @@ defmodule Adam.Tuning do
 
   defp save_overrides(map) do
     File.mkdir_p!(Path.dirname(@tuning_file))
-    File.write!(@tuning_file, Adam.Toon.encode(map))
+    Adam.AtomicFile.write!(@tuning_file, Adam.Toon.encode(map))
   end
 
   defp load_history do
@@ -283,6 +294,6 @@ defmodule Adam.Tuning do
     entries = load_history() ++ [entry]
     # Cap history at 1000 entries to keep file bounded
     entries = Enum.take(entries, -1000)
-    File.write!(@history_file, Adam.Toon.encode(%{"entries" => entries}))
+    Adam.AtomicFile.write!(@history_file, Adam.Toon.encode(%{"entries" => entries}))
   end
 end

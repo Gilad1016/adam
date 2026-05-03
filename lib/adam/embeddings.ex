@@ -91,7 +91,7 @@ defmodule Adam.Embeddings do
 
     dir = Path.dirname(@embeddings_file)
     File.mkdir_p!(dir)
-    File.write!(@embeddings_file, Jason.encode!(updated))
+    Adam.AtomicFile.write!(@embeddings_file, Jason.encode!(updated))
 
     :ok
   rescue

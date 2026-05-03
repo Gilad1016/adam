@@ -191,7 +191,7 @@ defmodule Adam.Compaction do
   end
 
   defp save_entries(entries) do
-    File.write!(@thought_log, Adam.Toon.encode(entries))
+    Adam.AtomicFile.write!(@thought_log, Adam.Toon.encode(entries))
   end
 
   defp load_state do
@@ -211,7 +211,7 @@ defmodule Adam.Compaction do
 
   defp save_state(state) do
     File.mkdir_p!(Path.dirname(@compaction_state_file))
-    File.write!(@compaction_state_file, Adam.Toon.encode(state))
+    Adam.AtomicFile.write!(@compaction_state_file, Adam.Toon.encode(state))
   end
 
   defp max_entries do

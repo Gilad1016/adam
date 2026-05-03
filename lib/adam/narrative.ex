@@ -50,7 +50,7 @@ defmodule Adam.Narrative do
           case validate_against_kernel(new_narrative) do
             :ok ->
               File.mkdir_p!(Path.dirname(@narrative_file))
-              File.write!(@narrative_file, new_narrative <> "\n")
+              Adam.AtomicFile.write!(@narrative_file, new_narrative <> "\n")
               IO.puts("[NARRATIVE] regenerated (#{String.length(new_narrative)} chars)")
               :ok
 
@@ -249,7 +249,7 @@ defmodule Adam.Narrative do
 
     entries = (existing ++ [entry]) |> Enum.take(-@rejection_log_cap)
     File.mkdir_p!(Path.dirname(@rejection_log_file))
-    File.write!(@rejection_log_file, Adam.Toon.encode(%{"entries" => entries}))
+    Adam.AtomicFile.write!(@rejection_log_file, Adam.Toon.encode(%{"entries" => entries}))
   rescue
     _ -> :ok
   end
