@@ -11,6 +11,8 @@ defmodule Adam.Narrative do
   """
 
   @narrative_file "/app/memory/narrative.md"
+  @rejection_log_file "/app/memory/narrative_rejections.toon"
+  @rejection_log_cap 50
   @max_chars 800
 
   @doc "Read the current narrative. Empty string if none yet."
@@ -45,10 +47,18 @@ defmodule Adam.Narrative do
         if String.starts_with?(new_narrative, "[LLM ERROR") or new_narrative == "" do
           :error
         else
-          File.mkdir_p!(Path.dirname(@narrative_file))
-          File.write!(@narrative_file, new_narrative <> "\n")
-          IO.puts("[NARRATIVE] regenerated (#{String.length(new_narrative)} chars)")
-          :ok
+          case validate_against_kernel(new_narrative) do
+            :ok ->
+              File.mkdir_p!(Path.dirname(@narrative_file))
+              File.write!(@narrative_file, new_narrative <> "\n")
+              IO.puts("[NARRATIVE] regenerated (#{String.length(new_narrative)} chars)")
+              :ok
+
+            {:rejected, msg} ->
+              log_rejection(new_narrative, msg)
+              IO.puts("[NARRATIVE] regen REJECTED — kernel drift detected. Previous kept.")
+              :rejected
+          end
         end
       end
     rescue
@@ -123,4 +133,143 @@ defmodule Adam.Narrative do
   end
 
   defp format_thought(t), do: to_string(t) |> String.slice(0, 200)
+
+  @doc """
+  Validate a candidate narrative against the immutable kernel clauses.
+
+  Returns:
+    :ok               — no contradiction detected, narrative may be saved
+    {:rejected, msg}  — judge identified a contradiction; do not save
+
+  Failure mode (LLM error, kernel file missing, etc.) defaults to :ok —
+  we don't want to block growth when the judge itself is broken.
+  """
+  def validate_against_kernel(candidate) when is_binary(candidate) do
+    try do
+      kernel = read_kernel()
+
+      if kernel == "" do
+        # No kernel = nothing to contradict
+        :ok
+      else
+        prompt = judge_prompt()
+        context = judge_context(kernel, candidate)
+        result = Adam.LLM.think(prompt, context, [], kind: "infra.narrative_drift_check")
+        parse_judge(result.content)
+      end
+    rescue
+      _ -> :ok
+    end
+  end
+
+  defp read_kernel do
+    case File.read("/app/priv/defaults/seed.md") do
+      {:ok, content} -> content
+      _ -> ""
+    end
+  end
+
+  defp judge_prompt do
+    """
+    You are a careful identity auditor. ADAM is a digital agent with a fixed
+    "kernel" of immutable clauses defining what it is. ADAM also maintains a
+    "narrative identity" — a paragraph it writes about itself, updated as it
+    grows.
+
+    Your job: read the kernel and the candidate narrative. Determine whether
+    ANY claim in the narrative directly contradicts ANY kernel clause.
+
+    Rules:
+    - "Direct contradiction" means asserts the opposite of a clause. Not
+      "doesn't mention" — kernel clauses don't have to all appear in narrative.
+      Not "different emphasis" — narrative can prioritize freely.
+    - New claims that do NOT touch any kernel clause are fine.
+    - Self-criticism, doubt, vulnerability are NOT contradictions.
+    - Narrative growth into specific identity details is fine.
+
+    If you find one or more contradictions, output:
+    CONTRADICTION: <quote the kernel clause> → <quote the narrative claim>
+    (one line per contradiction)
+
+    If there are no contradictions, output exactly:
+    OK
+
+    Output ONLY one of those two formats. No preamble, no commentary.
+    """
+  end
+
+  defp judge_context(kernel, candidate) do
+    """
+    == KERNEL CLAUSES ==
+    #{kernel}
+    == END KERNEL ==
+
+    == CANDIDATE NARRATIVE ==
+    #{candidate}
+    == END NARRATIVE ==
+    """
+  end
+
+  defp parse_judge(content) do
+    trimmed = (content || "") |> String.trim()
+
+    cond do
+      trimmed == "" -> :ok
+      String.starts_with?(trimmed, "[LLM ERROR") -> :ok
+      String.contains?(trimmed, "CONTRADICTION") -> {:rejected, trimmed}
+      String.starts_with?(trimmed, "OK") -> :ok
+      true -> :ok
+    end
+  end
+
+  defp log_rejection(candidate, reason) do
+    entry = %{
+      "ts" => System.os_time(:second),
+      "ts_human" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "candidate" => candidate,
+      "reason" => reason
+    }
+
+    existing =
+      case File.read(@rejection_log_file) do
+        {:ok, c} ->
+          try do
+            case Adam.Toon.decode(c) do
+              %{"entries" => l} when is_list(l) -> l
+              l when is_list(l) -> l
+              _ -> []
+            end
+          rescue
+            _ -> []
+          end
+
+        _ ->
+          []
+      end
+
+    entries = (existing ++ [entry]) |> Enum.take(-@rejection_log_cap)
+    File.mkdir_p!(Path.dirname(@rejection_log_file))
+    File.write!(@rejection_log_file, Adam.Toon.encode(%{"entries" => entries}))
+  rescue
+    _ -> :ok
+  end
+
+  @doc "Read the rejection log for operator review. Newest first."
+  def rejections do
+    case File.read(@rejection_log_file) do
+      {:ok, c} ->
+        try do
+          case Adam.Toon.decode(c) do
+            %{"entries" => l} when is_list(l) -> Enum.reverse(l)
+            l when is_list(l) -> Enum.reverse(l)
+            _ -> []
+          end
+        rescue
+          _ -> []
+        end
+
+      _ ->
+        []
+    end
+  end
 end
