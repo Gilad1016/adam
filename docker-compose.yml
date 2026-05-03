@@ -18,10 +18,10 @@ services:
               capabilities: [gpu]
     environment:
       - GIN_MODE=release
-      # Keep models resident so we don't re-load on every think/act swap.
+      # Keep the model resident so we don't re-load between calls.
       - OLLAMA_KEEP_ALIVE=-1
-      # Allow both think and act models in VRAM at the same time.
-      - OLLAMA_MAX_LOADED_MODELS=2
+      # ADAM uses a single model — only one loaded at a time.
+      - OLLAMA_MAX_LOADED_MODELS=1
       # Serve up to 4 concurrent inferences from one model.
       - OLLAMA_NUM_PARALLEL=4
       # Faster attention kernel on Ampere+ GPUs.
