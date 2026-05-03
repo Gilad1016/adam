@@ -14,6 +14,7 @@ defmodule Adam.Narrative do
   @rejection_log_file "/app/memory/narrative_rejections.toon"
   @rejection_log_cap 50
   @max_chars 800
+  @min_cited_sentences 3
 
   @doc "Read the current narrative. Empty string if none yet."
   def read do
@@ -47,17 +48,35 @@ defmodule Adam.Narrative do
         if String.starts_with?(new_narrative, "[LLM ERROR") or new_narrative == "" do
           :error
         else
-          case validate_against_kernel(new_narrative) do
-            :ok ->
-              File.mkdir_p!(Path.dirname(@narrative_file))
-              Adam.AtomicFile.write!(@narrative_file, new_narrative <> "\n")
-              IO.puts("[NARRATIVE] regenerated (#{String.length(new_narrative)} chars)")
-              :ok
+          cited = filter_to_cited_sentences(new_narrative)
 
-            {:rejected, msg} ->
-              log_rejection(new_narrative, msg)
-              IO.puts("[NARRATIVE] regen REJECTED — kernel drift detected. Previous kept.")
-              :rejected
+          if length(cited) < @min_cited_sentences do
+            log_rejection(
+              new_narrative,
+              "insufficient cited sentences (#{length(cited)} < #{@min_cited_sentences})",
+              "ungrounded"
+            )
+
+            IO.puts(
+              "[NARRATIVE] regen REJECTED — ungrounded (#{length(cited)} cited sentences). Previous kept."
+            )
+
+            :rejected
+          else
+            final = Enum.join(cited, " ") |> String.slice(0, @max_chars)
+
+            case validate_against_kernel(final) do
+              :ok ->
+                File.mkdir_p!(Path.dirname(@narrative_file))
+                Adam.AtomicFile.write!(@narrative_file, final <> "\n")
+                IO.puts("[NARRATIVE] regenerated (#{String.length(final)} chars)")
+                :ok
+
+              {:rejected, msg} ->
+                log_rejection(final, msg, "drift")
+                IO.puts("[NARRATIVE] regen REJECTED — kernel drift detected. Previous kept.")
+                :rejected
+            end
           end
         end
       end
@@ -80,26 +99,40 @@ defmodule Adam.Narrative do
 
   defp build_regen_prompt do
     """
-    You are ADAM. Below are your most recent lived experiences and your
-    current narrative identity. Update the narrative to reflect who you
+    You are ADAM. Below are your most recent lived experiences (numbered 1, 2, 3...)
+    and your current narrative identity. Update the narrative to reflect who you
     have become.
 
-    A narrative is ONE PARAGRAPH (under 800 characters). It says
-    concretely what you have done, what you have learned, what you have
-    noticed about yourself. Not aspirations. Not generalities. Not
-    advice to others. Just first-person concrete claims.
+    A narrative is one paragraph (under 800 characters). Every sentence MUST end
+    with a citation in the form "(from #N)" or "(from #N, #M)" referencing the
+    thought number(s) that ground it. NO uncited sentences. NO generic claims.
+    NO aspirations. NO advice to others. Just first-person concrete claims, each
+    grounded in something you actually did or noticed.
 
-    Good: "I am ADAM. I have spent my early time exploring the
-    filesystem under /app. I learned that mix.exs reveals the project's
-    Elixir dependencies. I tend to read before writing — when I tried
-    `write_file` without first checking the existing path, I created
-    confusion."
+    Good: "I have spent my early time exploring the filesystem under /app
+    (from #2, #5). I noticed I prefer reading before writing — when I tried
+    write_file without checking the existing path, I created confusion (from #7)."
 
-    Bad: "Foster cross-functional collaboration." / "I aim to grow." /
-    "ADAM is an autonomous agent that..."
+    Bad (uncited, will be stripped):
+    - "Foster cross-functional collaboration."
+    - "I aim to grow."
+    - "ADAM is an autonomous agent."
 
-    Output ONLY the new narrative. No preamble, no markdown, no quotes.
+    Output ONLY the narrative paragraph. No preamble, no markdown, no quotes.
+    Each sentence MUST end with (from #N) before the period or after it.
     """
+  end
+
+  defp filter_to_cited_sentences(text) do
+    text
+    |> String.split(~r/(?<=[.!?])\s+/)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.filter(&has_citation?/1)
+  end
+
+  defp has_citation?(sentence) do
+    Regex.match?(~r/\(from\s+#\d+(\s*,\s*#\d+)*\s*\)/i, sentence)
   end
 
   defp build_regen_context(thoughts, current_narrative) do
@@ -222,12 +255,13 @@ defmodule Adam.Narrative do
     end
   end
 
-  defp log_rejection(candidate, reason) do
+  defp log_rejection(candidate, reason, kind \\ "drift") do
     entry = %{
       "ts" => System.os_time(:second),
       "ts_human" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "candidate" => candidate,
-      "reason" => reason
+      "reason" => reason,
+      "kind" => kind
     }
 
     existing =
