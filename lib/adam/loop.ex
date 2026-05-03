@@ -3,7 +3,8 @@ defmodule Adam.Loop do
 
   # Cap on rolling chat history: keep at most this many user turns
   # (each user turn brings its assistant reply + tool result messages).
-  @history_user_turns 6
+  # Per-stage: narrower context for younger stages, wider for older.
+  @history_user_turns_per_stage %{0 => 4, 1 => 6, 2 => 8, 3 => 12, 4 => 16}
 
   def start_link(_), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
 
@@ -147,21 +148,31 @@ defmodule Adam.Loop do
     end)
   end
 
-  # Keep at most @history_user_turns most-recent user turns, with the
+  # Keep at most history_user_turns/0 most-recent user turns, with the
   # assistant + tool messages that follow each. We walk forward, find the
   # cutoff index of the Nth-from-last user message, and drop everything before.
   defp trim_history(messages) do
+    cap = history_user_turns()
+
     user_indices =
       messages
       |> Enum.with_index()
       |> Enum.filter(fn {m, _} -> m.role == "user" end)
       |> Enum.map(fn {_, i} -> i end)
 
-    if length(user_indices) <= @history_user_turns do
+    if length(user_indices) <= cap do
       messages
     else
-      cutoff = Enum.at(user_indices, length(user_indices) - @history_user_turns)
+      cutoff = Enum.at(user_indices, length(user_indices) - cap)
       Enum.drop(messages, cutoff)
+    end
+  end
+
+  defp history_user_turns do
+    try do
+      Map.get(@history_user_turns_per_stage, Adam.Psyche.get_stage(), 6)
+    rescue
+      _ -> 6
     end
   end
 
