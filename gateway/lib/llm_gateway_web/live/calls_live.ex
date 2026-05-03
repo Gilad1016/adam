@@ -13,6 +13,7 @@ defmodule LlmGatewayWeb.CallsLive do
      socket
      |> assign(:expanded, MapSet.new())
      |> assign(:per_page, @per_page)
+     |> assign(:filter_kind, nil)
      |> load_page(1)}
   end
 
@@ -24,7 +25,7 @@ defmodule LlmGatewayWeb.CallsLive do
 
   @impl true
   def handle_info({:new_call, call}, socket) do
-    if socket.assigns.page == 1 do
+    if matches_filter?(call, socket.assigns.filter_kind) and socket.assigns.page == 1 do
       calls = [call | socket.assigns.calls] |> Enum.take(@per_page)
       {:noreply, assign(socket, calls: calls, total: socket.assigns.total + 1)}
     else
@@ -44,11 +45,26 @@ defmodule LlmGatewayWeb.CallsLive do
     {:noreply, assign(socket, :expanded, expanded)}
   end
 
+  def handle_event("filter_kind", %{"value" => value}, socket) do
+    filter = if value == "all", do: nil, else: value
+
+    {:noreply,
+     socket
+     |> assign(:filter_kind, filter)
+     |> load_page(1)}
+  end
+
+  defp matches_filter?(_, nil), do: true
+  defp matches_filter?(%{kind: k}, prefix) when is_binary(k), do: String.starts_with?(k, prefix)
+  defp matches_filter?(_, _), do: false
+
   defp load_page(socket, page) do
+    filter = socket.assigns[:filter_kind]
+
     socket
     |> assign(:page, page)
-    |> assign(:calls, Calls.list(page: page, per: @per_page))
-    |> assign(:total, Calls.count())
+    |> assign(:calls, Calls.list(page: page, per: @per_page, kind: filter))
+    |> assign(:total, Calls.count(kind: filter))
   end
 
   defp parse_int(nil, default), do: default
@@ -64,11 +80,35 @@ defmodule LlmGatewayWeb.CallsLive do
   def render(assigns) do
     ~H"""
     <div class="mx-auto max-w-7xl p-6">
-      <div class="mb-6">
+      <div class="mb-4">
         <h1 class="text-2xl font-semibold text-gray-100">LLM calls</h1>
         <p class="text-sm text-gray-500 mt-1">
           <%= @total %> total · page <%= @page %> · live updating
         </p>
+      </div>
+
+      <div class="flex gap-2 mb-4 text-xs">
+        <button
+          phx-click="filter_kind"
+          phx-value-value="all"
+          class={"px-3 py-1 rounded border " <> filter_pill_class(@filter_kind, nil)}
+        >
+          all
+        </button>
+        <button
+          phx-click="filter_kind"
+          phx-value-value="agent"
+          class={"px-3 py-1 rounded border " <> filter_pill_class(@filter_kind, "agent")}
+        >
+          agent
+        </button>
+        <button
+          phx-click="filter_kind"
+          phx-value-value="infra"
+          class={"px-3 py-1 rounded border " <> filter_pill_class(@filter_kind, "infra")}
+        >
+          infra
+        </button>
       </div>
 
       <div class="space-y-1">
@@ -85,6 +125,7 @@ defmodule LlmGatewayWeb.CallsLive do
               class="w-full text-left p-3 grid grid-cols-12 gap-2 text-xs hover:bg-gray-900 transition"
             >
               <span class="col-span-2 text-gray-500"><%= relative_time(call.inserted_at) %></span>
+              <span class={"col-span-1 truncate text-[10px] uppercase tracking-wider " <> kind_color(call.kind)}><%= call.kind || "—" %></span>
               <span class="col-span-2 text-cyan-400 truncate"><%= call.model || "—" %></span>
               <span class={"col-span-1 #{status_color(call.status)}"}><%= call.status %></span>
               <span class="col-span-1 text-gray-400"><%= call.duration_ms %>ms</span>
@@ -92,7 +133,7 @@ defmodule LlmGatewayWeb.CallsLive do
                 <%= call.prompt_tokens || "·" %>/<%= call.completion_tokens || "·" %>
               </span>
               <span class="col-span-1 text-gray-400">tc:<%= call.tool_call_count || 0 %></span>
-              <span class="col-span-4 truncate text-gray-300"><%= preview(call) %></span>
+              <span class="col-span-3 truncate text-gray-300"><%= preview(call) %></span>
             </button>
 
             <%= if MapSet.member?(@expanded, call.id) do %>
@@ -189,6 +230,32 @@ defmodule LlmGatewayWeb.CallsLive do
   defp status_color(s) when is_integer(s) and s in 200..299, do: "text-green-400"
   defp status_color(s) when is_integer(s) and s in 400..599, do: "text-red-400"
   defp status_color(_), do: "text-gray-400"
+
+  defp kind_color(k) when is_binary(k) do
+    cond do
+      String.starts_with?(k, "agent") -> "text-cyan-400"
+      String.starts_with?(k, "infra") -> "text-amber-400"
+      true -> "text-gray-500"
+    end
+  end
+
+  defp kind_color(_), do: "text-gray-500"
+
+  defp filter_pill_class(current, value) do
+    cond do
+      current == value and value == nil ->
+        "border-cyan-400 text-cyan-400 bg-cyan-400/10"
+
+      current == value and value == "agent" ->
+        "border-cyan-400 text-cyan-400 bg-cyan-400/10"
+
+      current == value and value == "infra" ->
+        "border-amber-400 text-amber-400 bg-amber-400/10"
+
+      true ->
+        "border-gray-700 text-gray-400 hover:text-gray-200"
+    end
+  end
 
   defp relative_time(%DateTime{} = dt) do
     diff = DateTime.diff(DateTime.utc_now(), dt, :second)

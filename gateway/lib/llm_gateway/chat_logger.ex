@@ -40,7 +40,8 @@ defmodule LlmGateway.ChatLogger do
       stream: parsed_req["stream"] == true,
       prompt_tokens: get_int(parsed_resp, "prompt_eval_count"),
       completion_tokens: get_int(parsed_resp, "eval_count"),
-      tool_call_count: count_tool_calls(parsed_resp)
+      tool_call_count: count_tool_calls(parsed_resp),
+      kind: compute_kind(proxy)
     }
 
     case LlmGateway.Calls.insert(attrs) do
@@ -78,4 +79,17 @@ defmodule LlmGateway.ChatLogger do
     do: length(calls)
 
   defp count_tool_calls(_), do: 0
+
+  defp compute_kind(proxy) do
+    case List.keyfind(proxy[:req_headers] || [], "x-adam-kind", 0) do
+      {_, value} when is_binary(value) and byte_size(value) > 0 ->
+        value
+
+      _ ->
+        case proxy[:path] do
+          "/api/chat" -> "agent"
+          _ -> "infra"
+        end
+    end
+  end
 end

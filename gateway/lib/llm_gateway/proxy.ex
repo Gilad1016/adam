@@ -55,7 +55,9 @@ defmodule LlmGateway.Proxy do
       response_body: body,
       status: resp.status,
       duration_ms: duration_ms,
-      error: nil
+      error: nil,
+      path: conn.request_path,
+      req_headers: conn.req_headers
     })
     |> put_response_headers(resp.headers)
     |> send_resp(resp.status, body)
@@ -70,7 +72,9 @@ defmodule LlmGateway.Proxy do
       response_body: nil,
       status: 502,
       duration_ms: duration_ms,
-      error: msg
+      error: msg,
+      path: conn.request_path,
+      req_headers: conn.req_headers
     })
     |> put_resp_content_type("text/plain")
     |> send_resp(502, msg)
