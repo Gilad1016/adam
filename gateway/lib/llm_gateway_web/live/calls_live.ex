@@ -160,35 +160,65 @@ defmodule LlmGatewayWeb.CallsLive do
                 <% end %>
 
                 <% messages = parsed_messages(call) %>
-                <% sys = system_message(messages) %>
-                <% usr = user_message(messages) %>
-                <% sections = parse_sections(usr && usr["content"]) %>
                 <% tools_json = tools_pretty(call) %>
-
-                <%= if sys do %>
-                  <div class={"border border-gray-800 rounded " <> section_border("system prompt")}>
-                    <div class="text-[10px] uppercase tracking-wider text-cyan-400 px-3 pt-2">system prompt</div>
-                    <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= sys["content"] %></pre>
-                  </div>
-                <% end %>
-
-                <%= for section <- sections do %>
-                  <div class="border border-gray-800 rounded">
-                    <div class="text-[10px] uppercase tracking-wider text-gray-400 px-3 pt-2"><%= section.label %></div>
-                    <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= section.content %></pre>
-                  </div>
-                <% end %>
 
                 <%= if tools_json do %>
                   <div class={"border border-gray-800 rounded " <> section_border("tools")}>
-                    <div class="text-[10px] uppercase tracking-wider text-amber-400 px-3 pt-2">tools</div>
+                    <div class="text-[10px] uppercase tracking-wider text-amber-400 px-3 pt-2">available tools</div>
                     <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= tools_json %></pre>
                   </div>
                 <% end %>
 
+                <%= for msg <- messages do %>
+                  <%= if msg["role"] == "system" do %>
+                    <div class={"border border-gray-800 rounded " <> section_border("system prompt")}>
+                      <div class="text-[10px] uppercase tracking-wider text-cyan-400 px-3 pt-2">system</div>
+                      <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= msg["content"] %></pre>
+                    </div>
+                  <% end %>
+                  <%= if msg["role"] == "user" do %>
+                    <% user_sections = parse_sections(msg["content"]) %>
+                    <div class="border border-gray-800 rounded">
+                      <div class="text-[10px] uppercase tracking-wider text-gray-500 px-3 pt-2">→ user</div>
+                      <%= if user_sections == [] do %>
+                        <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= msg["content"] %></pre>
+                      <% else %>
+                        <div class="p-3 space-y-2">
+                          <%= for section <- user_sections do %>
+                            <div>
+                              <div class="text-[10px] uppercase tracking-wider text-gray-500"><%= section.label %></div>
+                              <pre class="text-xs whitespace-pre-wrap text-gray-200 mt-1"><%= section.content %></pre>
+                            </div>
+                          <% end %>
+                        </div>
+                      <% end %>
+                    </div>
+                  <% end %>
+                  <%= if msg["role"] == "assistant" do %>
+                    <div class="border border-blue-900/40 rounded bg-blue-950/10">
+                      <div class="text-[10px] uppercase tracking-wider text-blue-400 px-3 pt-2">← assistant</div>
+                      <%= if msg["content"] not in [nil, ""] do %>
+                        <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= msg["content"] %></pre>
+                      <% end %>
+                      <%= for tc <- List.wrap(msg["tool_calls"]) do %>
+                        <div class="px-3 pb-2">
+                          <div class="text-[10px] text-amber-400 mt-1">↳ tool call: <%= get_in(tc, ["function", "name"]) || tc["name"] %></div>
+                          <pre class="text-xs whitespace-pre-wrap text-amber-200/80 p-2 mt-1 bg-gray-950 rounded"><%= pretty_args(get_in(tc, ["function", "arguments"]) || tc["arguments"]) %></pre>
+                        </div>
+                      <% end %>
+                    </div>
+                  <% end %>
+                  <%= if msg["role"] == "tool" do %>
+                    <div class="border border-amber-900/40 rounded bg-amber-950/10">
+                      <div class="text-[10px] uppercase tracking-wider text-amber-400 px-3 pt-2">→ tool result<%= if msg["name"], do: ": " <> msg["name"] %></div>
+                      <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= msg["content"] %></pre>
+                    </div>
+                  <% end %>
+                <% end %>
+
                 <%= if call.response do %>
-                  <div class="border border-gray-800 rounded">
-                    <div class="text-[10px] uppercase tracking-wider text-gray-500 px-3 pt-2">response</div>
+                  <div class="border border-green-900/40 rounded bg-green-950/10">
+                    <div class="text-[10px] uppercase tracking-wider text-green-400 px-3 pt-2">↩ response (this call)</div>
                     <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= pretty(call.response) %></pre>
                   </div>
                 <% end %>
@@ -222,6 +252,11 @@ defmodule LlmGatewayWeb.CallsLive do
   end
 
   defp pretty(_), do: ""
+
+  defp pretty_args(nil), do: ""
+  defp pretty_args(args) when is_map(args) or is_list(args), do: Jason.encode!(args, pretty: true)
+  defp pretty_args(args) when is_binary(args), do: args
+  defp pretty_args(args), do: inspect(args)
 
   defp preview(%{request: req}) when is_binary(req) do
     case Jason.decode(req) do
@@ -290,14 +325,6 @@ defmodule LlmGatewayWeb.CallsLive do
       {:ok, %{"messages" => msgs}} when is_list(msgs) -> msgs
       _ -> []
     end
-  end
-
-  defp system_message(messages) do
-    Enum.find(messages, &(&1["role"] == "system"))
-  end
-
-  defp user_message(messages) do
-    Enum.find(messages, &(&1["role"] == "user"))
   end
 
   defp parse_sections(nil), do: []
