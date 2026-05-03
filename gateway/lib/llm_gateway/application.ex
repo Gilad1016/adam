@@ -8,6 +8,7 @@ defmodule LlmGateway.Application do
     children = [
       LlmGateway.Repo,
       {Phoenix.PubSub, name: LlmGateway.PubSub},
+      LlmGateway.SystemStats,
       LlmGatewayWeb.Endpoint
     ]
 

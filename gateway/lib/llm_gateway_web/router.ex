@@ -14,5 +14,6 @@ defmodule LlmGatewayWeb.Router do
     pipe_through :browser
     live "/", LlmGatewayWeb.CallsLive, :index
     live "/admin", LlmGatewayWeb.AdminLive, :index
+    live "/system", LlmGatewayWeb.SystemLive, :index
   end
 end
