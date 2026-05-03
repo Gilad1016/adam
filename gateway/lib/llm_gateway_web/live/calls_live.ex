@@ -98,19 +98,43 @@ defmodule LlmGatewayWeb.CallsLive do
             <%= if MapSet.member?(@expanded, call.id) do %>
               <div class="border-t border-gray-800 p-3 space-y-3 bg-gray-950/50">
                 <%= if call.error do %>
-                  <div>
-                    <div class="text-xs text-red-400 mb-1">error</div>
-                    <pre class="text-xs whitespace-pre-wrap text-red-300 bg-gray-950 p-2 rounded"><%= call.error %></pre>
+                  <div class="border border-red-800/50 rounded">
+                    <div class="text-[10px] uppercase tracking-wider text-red-500 px-3 pt-2">error</div>
+                    <pre class="text-xs whitespace-pre-wrap text-red-300 p-3"><%= call.error %></pre>
                   </div>
                 <% end %>
-                <div>
-                  <div class="text-xs text-gray-500 mb-1">request</div>
-                  <pre class="text-xs whitespace-pre-wrap text-gray-200 bg-gray-950 p-2 rounded max-h-96 overflow-auto"><%= pretty(call.request) %></pre>
-                </div>
+
+                <% messages = parsed_messages(call) %>
+                <% sys = system_message(messages) %>
+                <% usr = user_message(messages) %>
+                <% sections = parse_sections(usr && usr["content"]) %>
+                <% tools_json = tools_pretty(call) %>
+
+                <%= if sys do %>
+                  <div class={"border border-gray-800 rounded " <> section_border("system prompt")}>
+                    <div class="text-[10px] uppercase tracking-wider text-cyan-400 px-3 pt-2">system prompt</div>
+                    <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= sys["content"] %></pre>
+                  </div>
+                <% end %>
+
+                <%= for section <- sections do %>
+                  <div class="border border-gray-800 rounded">
+                    <div class="text-[10px] uppercase tracking-wider text-gray-400 px-3 pt-2"><%= section.label %></div>
+                    <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= section.content %></pre>
+                  </div>
+                <% end %>
+
+                <%= if tools_json do %>
+                  <div class={"border border-gray-800 rounded " <> section_border("tools")}>
+                    <div class="text-[10px] uppercase tracking-wider text-amber-400 px-3 pt-2">tools</div>
+                    <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= tools_json %></pre>
+                  </div>
+                <% end %>
+
                 <%= if call.response do %>
-                  <div>
-                    <div class="text-xs text-gray-500 mb-1">response</div>
-                    <pre class="text-xs whitespace-pre-wrap text-gray-200 bg-gray-950 p-2 rounded max-h-96 overflow-auto"><%= pretty(call.response) %></pre>
+                  <div class="border border-gray-800 rounded">
+                    <div class="text-[10px] uppercase tracking-wider text-gray-500 px-3 pt-2">response</div>
+                    <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= pretty(call.response) %></pre>
                   </div>
                 <% end %>
               </div>
@@ -179,4 +203,89 @@ defmodule LlmGatewayWeb.CallsLive do
   end
 
   defp relative_time(_), do: "—"
+
+  defp parsed_messages(call) do
+    case Jason.decode(call.request || "") do
+      {:ok, %{"messages" => msgs}} when is_list(msgs) -> msgs
+      _ -> []
+    end
+  end
+
+  defp system_message(messages) do
+    Enum.find(messages, &(&1["role"] == "system"))
+  end
+
+  defp user_message(messages) do
+    Enum.find(messages, &(&1["role"] == "user"))
+  end
+
+  defp parse_sections(nil), do: []
+
+  defp parse_sections(content) when is_binary(content) do
+    lines = String.split(content, "\n")
+    do_parse_sections(lines, :outside, nil, [], [], [])
+  end
+
+  defp do_parse_sections([], :outside, _label, _acc, pre, sections) do
+    pre_section =
+      case Enum.reverse(pre) |> Enum.join("\n") |> String.trim() do
+        "" -> []
+        text -> [%{label: "memory", content: text}]
+      end
+
+    Enum.reverse(sections) ++ pre_section
+  end
+
+  defp do_parse_sections([], :inside, label, acc, _pre, sections) do
+    text = Enum.reverse(acc) |> Enum.join("\n")
+    Enum.reverse([%{label: label, content: text} | sections])
+  end
+
+  defp do_parse_sections([line | rest], :outside, _label, _acc, pre, sections) do
+    trimmed = String.trim(line)
+
+    cond do
+      Regex.match?(~r/^== ([A-Z][A-Z _]+) ==$/, trimmed) and
+          not String.starts_with?(trimmed, "== END") ->
+        [_, name] = Regex.run(~r/^== ([A-Z][A-Z _]+) ==$/, trimmed)
+
+        pre_section =
+          case Enum.reverse(pre) |> Enum.join("\n") |> String.trim() do
+            "" -> []
+            text -> [%{label: "memory", content: text}]
+          end
+
+        do_parse_sections(rest, :inside, String.downcase(name), [], [], pre_section ++ sections)
+
+      true ->
+        do_parse_sections(rest, :outside, nil, [], [line | pre], sections)
+    end
+  end
+
+  defp do_parse_sections([line | rest], :inside, label, acc, pre, sections) do
+    trimmed = String.trim(line)
+
+    cond do
+      Regex.match?(~r/^== END/, trimmed) ->
+        content = Enum.reverse(acc) |> Enum.join("\n") |> String.trim()
+        do_parse_sections(rest, :outside, nil, [], pre, [%{label: label, content: content} | sections])
+
+      true ->
+        do_parse_sections(rest, :inside, label, [line | acc], pre, sections)
+    end
+  end
+
+  defp section_border("system prompt"), do: "border-l-2 border-cyan-500/50"
+  defp section_border("tools"), do: "border-l-2 border-amber-500/50"
+  defp section_border(_), do: ""
+
+  defp tools_pretty(call) do
+    case Jason.decode(call.request || "") do
+      {:ok, %{"tools" => tools}} when is_list(tools) and tools != [] ->
+        Jason.encode!(tools, pretty: true)
+
+      _ ->
+        nil
+    end
+  end
 end
