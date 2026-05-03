@@ -28,6 +28,17 @@ defmodule Adam.Tools do
   def execute("schedule_list", _), do: Adam.Scheduler.list_routines()
   def execute("escalate", args), do: escalate(args)
   def execute("set_anchor", args), do: Adam.Psyche.set_anchor(args)
+
+  def execute("consult", %{"peer" => peer, "message" => message}) do
+    case Adam.Peers.consult(peer, message) do
+      {:ok, response} -> response
+      {:error, reason} -> "[CONSULT ERROR] #{reason}"
+    end
+  end
+
+  def execute("consult", _),
+    do: "[CONSULT ERROR] requires \"peer\" (one of: skeptic, planner, historian) and \"message\""
+
   def execute(name, _), do: "[ERROR: unknown tool '#{name}']"
 
   def execute_tool_calls(tool_calls) do
@@ -95,7 +106,26 @@ defmodule Adam.Tools do
       %{name: "schedule_remove", description: "Remove a routine", parameters: %{"type" => "object", "properties" => %{"name" => %{"type" => "string"}}, "required" => ["name"]}},
       %{name: "schedule_list", description: "List all routines", parameters: %{"type" => "object", "properties" => %{}}},
       %{name: "escalate", description: "Send an urgent message to the owner", parameters: %{"type" => "object", "properties" => %{"reason" => %{"type" => "string"}, "details" => %{"type" => "string"}}, "required" => ["reason"]}},
-      %{name: "set_anchor", description: "Pin a fact that must survive memory compaction", parameters: %{"type" => "object", "properties" => %{"key" => %{"type" => "string"}, "value" => %{"type" => "string"}}, "required" => ["key", "value"]}}
+      %{name: "set_anchor", description: "Pin a fact that must survive memory compaction", parameters: %{"type" => "object", "properties" => %{"key" => %{"type" => "string"}, "value" => %{"type" => "string"}}, "required" => ["key", "value"]}},
+      %{
+        name: "consult",
+        description: "Talk to a synthetic peer for an outside perspective. Available peers: skeptic (challenges reasoning), planner (structures intentions), historian (looks for patterns). Use when you want pushback or a second opinion.",
+        parameters: %{
+          "type" => "object",
+          "properties" => %{
+            "peer" => %{
+              "type" => "string",
+              "enum" => ["skeptic", "planner", "historian"],
+              "description" => "Which peer to consult."
+            },
+            "message" => %{
+              "type" => "string",
+              "description" => "What to ask the peer. First-person, specific. Include enough context for them to be useful."
+            }
+          },
+          "required" => ["peer", "message"]
+        }
+      }
     ]
   end
 
