@@ -1,7 +1,13 @@
 defmodule Adam.Loop do
   use GenServer
 
+  # Cap on rolling chat history: keep at most this many user turns
+  # (each user turn brings its assistant reply + tool result messages).
+  @history_user_turns 6
+
   def start_link(_), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
+
+  def reset_history, do: GenServer.cast(__MODULE__, :reset_history)
 
   def init(_) do
     Adam.Checkpoint.init_git()
@@ -14,7 +20,11 @@ defmodule Adam.Loop do
     IO.puts("[ADAM] Stage: #{Adam.Psyche.get_stage()} (#{Adam.Psyche.get_stage_name()})")
     IO.puts("[ADAM] Balance: $#{Adam.Safety.get_balance()}")
     send(self(), :iterate)
-    {:ok, %{iteration: 0, last_checkpoint: System.os_time(:second)}}
+    {:ok, %{iteration: 0, last_checkpoint: System.os_time(:second), messages: []}}
+  end
+
+  def handle_cast(:reset_history, state) do
+    {:noreply, %{state | messages: []}}
   end
 
   def handle_info(:iterate, state) do
@@ -23,19 +33,30 @@ defmodule Adam.Loop do
 
     state = iterate(iteration, state)
 
-    case Adam.Safety.validate_mutable_state() do
-      [] ->
-        Adam.Safety.clear_corruption_counter()
+    state =
+      case Adam.Safety.validate_mutable_state() do
+        [] ->
+          Adam.Safety.clear_corruption_counter()
+          state
 
-      errors ->
-        Adam.Safety.handle_corruption(errors, &Adam.Checkpoint.restore_latest/0)
-    end
+        errors ->
+          Adam.Safety.handle_corruption(errors, &Adam.Checkpoint.restore_latest/0)
+          # Conversation context is stale after rollback / safe-mode reset.
+          %{state | messages: []}
+      end
 
     state = maybe_checkpoint(state)
 
     if rem(iteration, 10) == 0, do: Adam.Psyche.emit_signals()
 
-    if Adam.Sleep.should_sleep?(), do: Adam.Sleep.run()
+    state =
+      if Adam.Sleep.should_sleep?() do
+        Adam.Sleep.run()
+        # Fresh start after consolidation.
+        %{state | messages: []}
+      else
+        state
+      end
 
     send(self(), :iterate)
     {:noreply, %{state | iteration: iteration}}
@@ -46,10 +67,14 @@ defmodule Adam.Loop do
     interrupts = interrupt_result.interrupts
     emails = interrupt_result.emails
 
-    Enum.each(emails, fn msg ->
-      Adam.Psyche.process_owner_email(msg)
-      handle_owner_email(msg)
-    end)
+    {state, goal_changed} =
+      Enum.reduce(emails, {state, false}, fn msg, {st, changed} ->
+        Adam.Psyche.process_owner_email(msg)
+        changed? = handle_owner_email(msg)
+        {st, changed or changed?}
+      end)
+
+    state = if goal_changed, do: %{state | messages: []}, else: state
 
     routines = Adam.Scheduler.check_routines()
 
@@ -57,27 +82,43 @@ defmodule Adam.Loop do
 
     psyche_state = Adam.Psyche.prepare(iteration)
     system_prompt = load_system_prompt()
-    context = build_context(psyche_state, interrupts, routines, iteration)
+    user_content = build_context(psyche_state, interrupts, routines, iteration)
     tools = Adam.Tools.get_tools_for_llm(psyche_state.allowed_tools)
 
     tier = determine_tier(interrupts, routines)
 
-    thought = Adam.LLM.think(system_prompt, context, tools, tier: tier)
+    messages = state.messages ++ [%{role: "user", content: user_content}]
+
+    thought =
+      Adam.LLM.think_messages(system_prompt, messages, tools,
+        tier: tier,
+        kind: "agent.think"
+      )
 
     IO.puts("[THOUGHT] #{String.slice(thought.content, 0, 200)}")
 
-    tool_results =
-      if thought.tool_calls != [] do
-        results =
-          Enum.map(thought.tool_calls, fn %{name: name, arguments: args} ->
-            result = Adam.Tools.execute(name, args)
-            IO.puts("[TOOL] #{name}: #{String.slice(to_string(result), 0, 100)}")
-            %{name: name, result: to_string(result)}
-          end)
+    messages =
+      messages ++
+        [
+          %{
+            role: "assistant",
+            content: thought.content,
+            tool_calls: format_tool_calls_for_message(thought.tool_calls)
+          }
+        ]
 
-        results
+    {tool_results, messages} =
+      if thought.tool_calls != [] do
+        Enum.reduce(thought.tool_calls, {[], messages}, fn %{name: name, arguments: args},
+                                                           {acc, msgs} ->
+          result = Adam.Tools.execute(name, args)
+          IO.puts("[TOOL] #{name}: #{String.slice(to_string(result), 0, 100)}")
+
+          tool_msg = %{role: "tool", name: name, content: to_string(result)}
+          {acc ++ [%{name: name, result: to_string(result)}], msgs ++ [tool_msg]}
+        end)
       else
-        []
+        {[], messages}
       end
 
     Adam.Psyche.process(thought, tool_results)
@@ -94,7 +135,39 @@ defmodule Adam.Loop do
       System.halt(0)
     end
 
-    state
+    %{state | messages: trim_history(messages)}
+  end
+
+  defp format_tool_calls_for_message([]), do: []
+
+  defp format_tool_calls_for_message(calls) do
+    Enum.map(calls, fn %{name: name, arguments: args} ->
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => name,
+          "arguments" => args
+        }
+      }
+    end)
+  end
+
+  # Keep at most @history_user_turns most-recent user turns, with the
+  # assistant + tool messages that follow each. We walk forward, find the
+  # cutoff index of the Nth-from-last user message, and drop everything before.
+  defp trim_history(messages) do
+    user_indices =
+      messages
+      |> Enum.with_index()
+      |> Enum.filter(fn {m, _} -> m.role == "user" end)
+      |> Enum.map(fn {_, i} -> i end)
+
+    if length(user_indices) <= @history_user_turns do
+      messages
+    else
+      cutoff = Enum.at(user_indices, length(user_indices) - @history_user_turns)
+      Enum.drop(messages, cutoff)
+    end
   end
 
   defp load_system_prompt do
@@ -155,6 +228,8 @@ defmodule Adam.Loop do
     end
   end
 
+  # Returns true if the action changed context meaningfully (e.g. new goal),
+  # signalling the loop to drop rolling chat history.
   defp handle_owner_email(msg) do
     owner_email = System.get_env("OWNER_EMAIL", "") |> String.downcase() |> String.trim()
     sender = (msg["from"] || "") |> String.downcase() |> String.trim()
@@ -162,7 +237,7 @@ defmodule Adam.Loop do
     # Only process commands from the owner
     if owner_email != "" and not String.contains?(sender, owner_email) do
       IO.puts("[OWNER] Ignoring command from non-owner: #{sender}")
-      :ok
+      false
     else
       subject = msg["subject"] || ""
       body = msg["body"] || ""
@@ -175,6 +250,7 @@ defmodule Adam.Loop do
           goal_text = if body != "", do: "#{goal}\n\n#{body}", else: goal
           File.write!("/app/prompts/goals.md", goal_text)
           IO.puts("[OWNER] Goal set: #{goal}")
+          true
 
         String.upcase(subject) |> String.starts_with?("BUDGET:") ->
           amount = subject
@@ -190,12 +266,14 @@ defmodule Adam.Loop do
             _ ->
               IO.puts("[OWNER] Invalid budget amount: #{amount}")
           end
+          false
 
         String.upcase(subject) |> String.starts_with?("STAGE:") ->
           Adam.Psyche.advance_stage()
+          false
 
         true ->
-          :ok
+          false
       end
     end
   end
