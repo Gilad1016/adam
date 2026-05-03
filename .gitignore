@@ -16,6 +16,7 @@ prompts/goals.md
 
 # Worktrees
 .worktrees/
+.claude/
 
 # Elixir
 adam_ex/_build/
