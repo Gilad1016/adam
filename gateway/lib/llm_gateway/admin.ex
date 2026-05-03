@@ -4,7 +4,7 @@ defmodule LlmGateway.Admin do
   @memory_dir "/app/host/memory"
   @knowledge_dir "/app/host/knowledge"
   @checkpoints_dir "/app/host/checkpoints"
-  @defaults_dir "/app/host/priv/defaults"
+  @defaults_dir "/app/host/priv/defaults/prompts"
 
   def env_path, do: System.get_env("ADAM_ENV_FILE", @env_path)
   def prompts_dir, do: System.get_env("ADAM_PROMPTS_DIR", @prompts_dir)
