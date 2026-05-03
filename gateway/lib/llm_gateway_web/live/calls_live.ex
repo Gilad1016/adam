@@ -113,6 +113,13 @@ defmodule LlmGatewayWeb.CallsLive do
         >
           infra
         </button>
+        <button
+          phx-click="filter_kind"
+          phx-value-kind="tuning"
+          class={"px-3 py-1 rounded border " <> filter_pill_class(@filter_kind, "tuning")}
+        >
+          tuning
+        </button>
       </div>
 
       <div class="space-y-1">
@@ -159,68 +166,82 @@ defmodule LlmGatewayWeb.CallsLive do
                   </div>
                 <% end %>
 
-                <% messages = parsed_messages(call) %>
-                <% tools_json = tools_pretty(call) %>
-
-                <%= if tools_json do %>
-                  <div class={"border border-gray-800 rounded " <> section_border("tools")}>
-                    <div class="text-[10px] uppercase tracking-wider text-amber-400 px-3 pt-2">available tools</div>
-                    <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= tools_json %></pre>
-                  </div>
-                <% end %>
-
-                <%= for msg <- messages do %>
-                  <%= if msg["role"] == "system" do %>
-                    <div class={"border border-gray-800 rounded " <> section_border("system prompt")}>
-                      <div class="text-[10px] uppercase tracking-wider text-cyan-400 px-3 pt-2">system</div>
-                      <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= msg["content"] %></pre>
+                <%= if String.starts_with?(call.kind || "", "tuning.") do %>
+                  <% event = tuning_event(call) %>
+                  <%= if event do %>
+                    <div class="border border-violet-900/40 rounded bg-violet-950/10 p-3 space-y-1 text-xs">
+                      <div class="text-[10px] uppercase tracking-wider text-violet-400">tuning event</div>
+                      <div><span class="text-gray-500 inline-block w-20">knob:</span> <span class="text-gray-100"><%= event["name"] %></span></div>
+                      <div><span class="text-gray-500 inline-block w-20">value:</span> <span class="text-gray-300"><%= format_value(event["previous"]) %> → <%= format_value(event["value"]) %></span></div>
+                      <div><span class="text-gray-500 inline-block w-20">source:</span> <span class="text-violet-300"><%= event["source"] %></span></div>
+                      <div><span class="text-gray-500 inline-block w-20">reason:</span> <span class="text-gray-300 whitespace-pre-wrap"><%= event["reason"] %></span></div>
+                      <div><span class="text-gray-500 inline-block w-20">ts:</span> <span class="text-gray-500"><%= format_ts(event["ts"]) %></span></div>
                     </div>
                   <% end %>
-                  <%= if msg["role"] == "user" do %>
-                    <% user_sections = parse_sections(msg["content"]) %>
-                    <div class="border border-gray-800 rounded">
-                      <div class="text-[10px] uppercase tracking-wider text-gray-500 px-3 pt-2">→ user</div>
-                      <%= if user_sections == [] do %>
+                <% else %>
+                  <% messages = parsed_messages(call) %>
+                  <% tools_json = tools_pretty(call) %>
+
+                  <%= if tools_json do %>
+                    <div class={"border border-gray-800 rounded " <> section_border("tools")}>
+                      <div class="text-[10px] uppercase tracking-wider text-amber-400 px-3 pt-2">available tools</div>
+                      <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= tools_json %></pre>
+                    </div>
+                  <% end %>
+
+                  <%= for msg <- messages do %>
+                    <%= if msg["role"] == "system" do %>
+                      <div class={"border border-gray-800 rounded " <> section_border("system prompt")}>
+                        <div class="text-[10px] uppercase tracking-wider text-cyan-400 px-3 pt-2">system</div>
                         <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= msg["content"] %></pre>
-                      <% else %>
-                        <div class="p-3 space-y-2">
-                          <%= for section <- user_sections do %>
-                            <div>
-                              <div class="text-[10px] uppercase tracking-wider text-gray-500"><%= section.label %></div>
-                              <pre class="text-xs whitespace-pre-wrap text-gray-200 mt-1"><%= section.content %></pre>
-                            </div>
-                          <% end %>
-                        </div>
-                      <% end %>
-                    </div>
-                  <% end %>
-                  <%= if msg["role"] == "assistant" do %>
-                    <div class="border border-blue-900/40 rounded bg-blue-950/10">
-                      <div class="text-[10px] uppercase tracking-wider text-blue-400 px-3 pt-2">← assistant</div>
-                      <%= if msg["content"] not in [nil, ""] do %>
+                      </div>
+                    <% end %>
+                    <%= if msg["role"] == "user" do %>
+                      <% user_sections = parse_sections(msg["content"]) %>
+                      <div class="border border-gray-800 rounded">
+                        <div class="text-[10px] uppercase tracking-wider text-gray-500 px-3 pt-2">→ user</div>
+                        <%= if user_sections == [] do %>
+                          <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= msg["content"] %></pre>
+                        <% else %>
+                          <div class="p-3 space-y-2">
+                            <%= for section <- user_sections do %>
+                              <div>
+                                <div class="text-[10px] uppercase tracking-wider text-gray-500"><%= section.label %></div>
+                                <pre class="text-xs whitespace-pre-wrap text-gray-200 mt-1"><%= section.content %></pre>
+                              </div>
+                            <% end %>
+                          </div>
+                        <% end %>
+                      </div>
+                    <% end %>
+                    <%= if msg["role"] == "assistant" do %>
+                      <div class="border border-blue-900/40 rounded bg-blue-950/10">
+                        <div class="text-[10px] uppercase tracking-wider text-blue-400 px-3 pt-2">← assistant</div>
+                        <%= if msg["content"] not in [nil, ""] do %>
+                          <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= msg["content"] %></pre>
+                        <% end %>
+                        <%= for tc <- List.wrap(msg["tool_calls"]) do %>
+                          <div class="px-3 pb-2">
+                            <div class="text-[10px] text-amber-400 mt-1">↳ tool call: <%= get_in(tc, ["function", "name"]) || tc["name"] %></div>
+                            <pre class="text-xs whitespace-pre-wrap text-amber-200/80 p-2 mt-1 bg-gray-950 rounded"><%= pretty_args(get_in(tc, ["function", "arguments"]) || tc["arguments"]) %></pre>
+                          </div>
+                        <% end %>
+                      </div>
+                    <% end %>
+                    <%= if msg["role"] == "tool" do %>
+                      <div class="border border-amber-900/40 rounded bg-amber-950/10">
+                        <div class="text-[10px] uppercase tracking-wider text-amber-400 px-3 pt-2">→ tool result<%= if msg["name"], do: ": " <> msg["name"] %></div>
                         <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= msg["content"] %></pre>
-                      <% end %>
-                      <%= for tc <- List.wrap(msg["tool_calls"]) do %>
-                        <div class="px-3 pb-2">
-                          <div class="text-[10px] text-amber-400 mt-1">↳ tool call: <%= get_in(tc, ["function", "name"]) || tc["name"] %></div>
-                          <pre class="text-xs whitespace-pre-wrap text-amber-200/80 p-2 mt-1 bg-gray-950 rounded"><%= pretty_args(get_in(tc, ["function", "arguments"]) || tc["arguments"]) %></pre>
-                        </div>
-                      <% end %>
-                    </div>
+                      </div>
+                    <% end %>
                   <% end %>
-                  <%= if msg["role"] == "tool" do %>
-                    <div class="border border-amber-900/40 rounded bg-amber-950/10">
-                      <div class="text-[10px] uppercase tracking-wider text-amber-400 px-3 pt-2">→ tool result<%= if msg["name"], do: ": " <> msg["name"] %></div>
-                      <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= msg["content"] %></pre>
-                    </div>
-                  <% end %>
-                <% end %>
 
-                <%= if call.response do %>
-                  <div class="border border-green-900/40 rounded bg-green-950/10">
-                    <div class="text-[10px] uppercase tracking-wider text-green-400 px-3 pt-2">↩ response (this call)</div>
-                    <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= pretty(call.response) %></pre>
-                  </div>
+                  <%= if call.response do %>
+                    <div class="border border-green-900/40 rounded bg-green-950/10">
+                      <div class="text-[10px] uppercase tracking-wider text-green-400 px-3 pt-2">↩ response (this call)</div>
+                      <pre class="text-xs whitespace-pre-wrap text-gray-200 p-3 max-h-72 overflow-auto"><%= pretty(call.response) %></pre>
+                    </div>
+                  <% end %>
                 <% end %>
               </div>
             <% end %>
@@ -258,6 +279,16 @@ defmodule LlmGatewayWeb.CallsLive do
   defp pretty_args(args) when is_binary(args), do: args
   defp pretty_args(args), do: inspect(args)
 
+  defp preview(%{kind: "tuning." <> _, request: req}) when is_binary(req) do
+    case Jason.decode(req) do
+      {:ok, %{"name" => n, "value" => v, "source" => s}} ->
+        "#{s} set #{n} = #{format_value(v)}"
+
+      _ ->
+        "tuning event"
+    end
+  end
+
   defp preview(%{request: req}) when is_binary(req) do
     case Jason.decode(req) do
       {:ok, %{"messages" => msgs}} when is_list(msgs) ->
@@ -276,12 +307,39 @@ defmodule LlmGatewayWeb.CallsLive do
 
   defp preview(_), do: ""
 
+  # Compact rendering of a tuning event value. Maps render as `<map:N keys>`
+  # so a personality-vector swap doesn't dump the whole vector inline.
+  defp format_value(v) when is_map(v), do: "<map:#{map_size(v)} keys>"
+  defp format_value(v) when is_number(v), do: to_string(v)
+  defp format_value(v) when is_binary(v), do: inspect(v)
+  defp format_value(nil), do: "—"
+  defp format_value(v), do: inspect(v)
+
+  defp tuning_event(%{request: req}) when is_binary(req) do
+    case Jason.decode(req) do
+      {:ok, m} when is_map(m) -> m
+      _ -> nil
+    end
+  end
+
+  defp tuning_event(_), do: nil
+
+  defp format_ts(ts) when is_integer(ts) do
+    case DateTime.from_unix(ts) do
+      {:ok, dt} -> Calendar.strftime(dt, "%Y-%m-%d %H:%M:%S UTC")
+      _ -> to_string(ts)
+    end
+  end
+
+  defp format_ts(ts), do: inspect(ts)
+
   defp status_color(s) when is_integer(s) and s in 200..299, do: "text-green-400"
   defp status_color(s) when is_integer(s) and s in 400..599, do: "text-red-400"
   defp status_color(_), do: "text-gray-400"
 
   defp kind_color(k) when is_binary(k) do
     cond do
+      String.starts_with?(k, "tuning.") -> "text-violet-400"
       String.starts_with?(k, "agent") -> "text-cyan-400"
       String.starts_with?(k, "infra") -> "text-amber-400"
       true -> "text-gray-500"
@@ -300,6 +358,9 @@ defmodule LlmGatewayWeb.CallsLive do
 
       current == value and value == "infra" ->
         "border-amber-400 text-amber-400 bg-amber-400/10"
+
+      current == value and value == "tuning" ->
+        "border-violet-400 text-violet-400 bg-violet-400/10"
 
       true ->
         "border-gray-700 text-gray-400 hover:text-gray-200"

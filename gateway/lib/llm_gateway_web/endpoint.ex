@@ -17,6 +17,10 @@ defmodule LlmGatewayWeb.Endpoint do
   # Intercept /api/* before the browser pipeline so the proxy reads raw bodies.
   plug LlmGatewayWeb.ApiDispatcher
 
+  # Intercept POST /events/tuning before the browser pipeline so we can read
+  # the raw JSON body without it being consumed by Plug.Parsers.
+  plug LlmGatewayWeb.EventsController
+
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options

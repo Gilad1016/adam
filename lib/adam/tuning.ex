@@ -217,6 +217,7 @@ defmodule Adam.Tuning do
           "[TUNING] #{Atom.to_string(name)}: #{format_change(previous)} -> #{format_change(value)} " <>
             "(source: #{Atom.to_string(source)}, reason: #{reason})"
         )
+        post_tuning_event(name, value, previous, reason, source)
         {:ok, value}
     end
   end
@@ -227,6 +228,30 @@ defmodule Adam.Tuning do
   defp format_change(v) when is_binary(v), do: inspect(v)
   defp format_change(v) when is_map(v), do: "<map:#{map_size(v)} keys>"
   defp format_change(v), do: inspect(v)
+
+  # Best-effort POST of the tuning event to the gateway so it appears inline
+  # in the /calls dashboard. The local file write + IO.puts are the source
+  # of truth; this HTTP call must NEVER affect the tuning operation. Any
+  # failure (network, timeout, malformed response) is swallowed.
+  defp post_tuning_event(name, value, previous, reason, source) do
+    body = %{
+      "name" => Atom.to_string(name),
+      "value" => value,
+      "previous" => previous,
+      "reason" => reason,
+      "source" => Atom.to_string(source),
+      "ts" => System.os_time(:second)
+    }
+
+    url =
+      (Application.get_env(:adam, :ollama_url) || "http://gateway:4000") <>
+        "/events/tuning"
+
+    Req.post(url, json: body, receive_timeout: 5_000)
+    :ok
+  rescue
+    _ -> :ok
+  end
 
   # Validated knobs (custom validator) take precedence over scalar bounds.
   defp value_ok?(value, %{validator: f}) when is_function(f, 1), do: f.(value) == true
