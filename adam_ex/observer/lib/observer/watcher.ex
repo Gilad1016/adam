@@ -1,10 +1,4 @@
 defmodule Observer.Watcher do
-  @moduledoc """
-  GenServer that tail-reads events.jsonl and broadcasts new events via PubSub.
-  Polls every poll_interval_ms milliseconds. Tracks byte position so only
-  new lines are processed on each poll.
-  """
-
   use GenServer
   require Logger
 
@@ -12,35 +6,84 @@ defmodule Observer.Watcher do
 
   @impl true
   def init(_opts) do
-    path = Application.get_env(:observer, :events_file, "/app/observer/events.jsonl")
     interval = Application.get_env(:observer, :poll_interval_ms, 500)
 
-    # Observer mounts the events file read-only. We don't create it here —
-    # ADAM will create it on its first write. We just tail it.
-    {events, pos} =
-      if File.exists?(path) do
-        read_from(path, 0)
-      else
-        Logger.info("[Observer.Watcher] Waiting for events file at #{path}")
-        {[], 0}
-      end
+    case remote_url() do
+      nil ->
+        path = Application.get_env(:observer, :events_file, "/app/observer/events.jsonl")
 
-    Enum.each(events, &store_and_broadcast/1)
+        {events, pos} =
+          if File.exists?(path) do
+            read_from(path, 0)
+          else
+            Logger.info("[Observer.Watcher] Waiting for events file at #{path}")
+            {[], 0}
+          end
 
-    send(self(), :poll)
-    {:ok, %{path: path, position: pos, interval: interval}}
+        Enum.each(events, &store_and_broadcast/1)
+        send(self(), :poll)
+        {:ok, %{mode: :local, path: path, position: pos, interval: interval}}
+
+      url ->
+        :inets.start()
+        :ssl.start()
+        send(self(), :poll)
+        {:ok, %{mode: :remote, url: url, cursor: 0, interval: interval}}
+    end
   end
 
   @impl true
-  def handle_info(:poll, %{path: path, position: pos, interval: interval} = state) do
+  def handle_info(:poll, %{mode: :local, path: path, position: pos, interval: interval} = state) do
     {events, new_pos} = read_from(path, pos)
     Enum.each(events, &store_and_broadcast/1)
     Process.send_after(self(), :poll, interval)
     {:noreply, %{state | position: new_pos}}
   end
 
-  # Read new content starting at byte offset `pos`.
-  # Returns {[decoded_events], new_byte_position}.
+  def handle_info(:poll, %{mode: :remote, url: url, cursor: cursor, interval: interval} = state) do
+    new_cursor = poll_remote(url, cursor)
+    Process.send_after(self(), :poll, interval)
+    {:noreply, %{state | cursor: new_cursor}}
+  end
+
+  defp remote_url do
+    case System.get_env("OBSERVER_REMOTE_URL") do
+      nil -> Application.get_env(:observer, :remote_url)
+      url -> url
+    end
+  end
+
+  defp poll_remote(url, cursor) do
+    request_url = String.to_charlist("#{url}?since=#{cursor}")
+
+    case :httpc.request(:get, {request_url, []}, [], []) do
+      {:ok, {{_version, 200, _reason}, _headers, body}} ->
+        body_str = if is_list(body), do: List.to_string(body), else: body
+
+        case Jason.decode(body_str) do
+          {:ok, %{"events" => events, "next" => next}} ->
+            Enum.each(events, &store_and_broadcast/1)
+            next
+
+          {:ok, _} ->
+            Logger.warning("[Observer.Watcher] Unexpected remote response shape")
+            cursor
+
+          {:error, reason} ->
+            Logger.warning("[Observer.Watcher] Failed to decode remote response: #{inspect(reason)}")
+            cursor
+        end
+
+      {:ok, {{_version, status, _reason}, _headers, _body}} ->
+        Logger.warning("[Observer.Watcher] Remote returned HTTP #{status}")
+        cursor
+
+      {:error, reason} ->
+        Logger.warning("[Observer.Watcher] Remote HTTP error: #{inspect(reason)}")
+        cursor
+    end
+  end
+
   defp read_from(path, pos) do
     cond do
       not File.exists?(path) ->
@@ -58,7 +101,6 @@ defmodule Observer.Watcher do
         raw = IO.binread(file, :eof)
         File.close(file)
 
-        # IO.binread returns :eof when there are no new bytes since `pos`.
         content = if is_binary(raw), do: raw, else: ""
         new_pos = pos + byte_size(content)
 
