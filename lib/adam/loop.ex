@@ -97,12 +97,15 @@ defmodule Adam.Loop do
 
     IO.puts("[THOUGHT] #{String.slice(thought.content, 0, 200)}")
 
-    # Build the assistant turn. Include `tool_calls` ONLY when non-empty —
-    # sending an empty array on assistant messages is rejected (or worse,
-    # crashes some Ollama tool-loop paths) and was the cause of the loop
-    # restarting on every iteration after PR #20 introduced rolling history.
-    assistant_msg = build_assistant_message(thought)
-    messages = messages ++ [assistant_msg]
+    messages =
+      messages ++
+        [
+          %{
+            role: "assistant",
+            content: thought.content,
+            tool_calls: format_tool_calls_for_message(thought.tool_calls)
+          }
+        ]
 
     {tool_results, messages} =
       if thought.tool_calls != [] do
@@ -135,17 +138,7 @@ defmodule Adam.Loop do
     %{state | messages: trim_history(messages)}
   end
 
-  defp build_assistant_message(%{tool_calls: []} = thought) do
-    %{role: "assistant", content: thought.content}
-  end
-
-  defp build_assistant_message(%{tool_calls: calls} = thought) do
-    %{
-      role: "assistant",
-      content: thought.content,
-      tool_calls: format_tool_calls_for_message(calls)
-    }
-  end
+  defp format_tool_calls_for_message([]), do: []
 
   defp format_tool_calls_for_message(calls) do
     Enum.map(calls, fn %{name: name, arguments: args} ->
@@ -162,8 +155,6 @@ defmodule Adam.Loop do
   # Keep at most @history_user_turns most-recent user turns, with the
   # assistant + tool messages that follow each. We walk forward, find the
   # cutoff index of the Nth-from-last user message, and drop everything before.
-  defp trim_history([]), do: []
-
   defp trim_history(messages) do
     user_indices =
       messages
@@ -189,43 +180,40 @@ defmodule Adam.Loop do
     end
   end
 
-  defp build_context(psyche_state, interrupts, routines, iteration) do
+  # Builds the per-iteration user message. Exactly four sections, each
+  # rendered only when it has content:
+  #   IDENTITY + STATE  (produced by Adam.Psyche.prepare/1 as `psyche_state.context`)
+  #   GOALS             (from /app/prompts/goals.md)
+  #   INTERRUPTS        (interrupts + scheduled routines, when present)
+  #
+  # Tools are passed via the API's `tools:` field; the model sees them through
+  # the chat template. Iteration counter and balance are intentionally omitted —
+  # budget pressure reaches the model via the felt energy drive in STATE.
+  defp build_context(psyche_state, interrupts, routines, _iteration) do
     parts = []
 
     parts = if psyche_state.context != "", do: parts ++ [psyche_state.context], else: parts
 
-    parts =
-      if interrupts != [] do
-        parts ++ ["== INTERRUPTS ==\n#{Enum.join(interrupts, "\n")}\n== END INTERRUPTS =="]
-      else
-        parts
-      end
-
-    parts =
-      if routines != [] do
-        parts ++ ["== ROUTINES ==\n#{Enum.join(routines, "\n")}\n== END ROUTINES =="]
-      else
-        parts
-      end
-
     goals =
       if File.exists?("/app/prompts/goals.md") do
-        File.read!("/app/prompts/goals.md")
+        File.read!("/app/prompts/goals.md") |> String.trim()
       else
         ""
       end
 
     parts = if goals != "", do: parts ++ ["== GOALS ==\n#{goals}\n== END GOALS =="], else: parts
 
-    tools_summary = Adam.Tools.get_tools_summary(psyche_state.allowed_tools)
-    parts = parts ++ ["== AVAILABLE TOOLS ==\n#{tools_summary}\n== END TOOLS =="]
+    interrupt_lines = interrupts ++ routines
 
-    if Adam.Safety.budget_visible?() do
-      parts = parts ++ ["Iteration: #{iteration}. Balance: $#{Adam.Safety.get_balance()}"]
-      Enum.join(parts, "\n\n")
-    else
-      Enum.join(parts, "\n\n")
-    end
+    parts =
+      if interrupt_lines != [] do
+        parts ++
+          ["== INTERRUPTS ==\n#{Enum.join(interrupt_lines, "\n")}\n== END INTERRUPTS =="]
+      else
+        parts
+      end
+
+    Enum.join(parts, "\n\n")
   end
 
   defp determine_tier(interrupts, routines) do
