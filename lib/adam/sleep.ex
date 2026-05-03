@@ -231,8 +231,7 @@ defmodule Adam.Sleep do
       "requested_at" => System.os_time(:second),
       "training_data" => @training_data_file,
       "thinker_model" => Application.get_env(:adam, :thinker_model),
-      "actor_model" => Application.get_env(:adam, :actor_model),
-      "deep_model" => Application.get_env(:adam, :deep_model)
+      "actor_model" => Application.get_env(:adam, :actor_model)
     }))
     IO.puts("[SLEEP] Fine-tuning requested (#{trigger_file})")
   end

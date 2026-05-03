@@ -27,8 +27,7 @@ defmodule Adam.LLM do
   def ensure_models do
     models = [
       Application.get_env(:adam, :thinker_model),
-      Application.get_env(:adam, :actor_model),
-      Application.get_env(:adam, :deep_model)
+      Application.get_env(:adam, :actor_model)
     ]
 
     results =
@@ -80,11 +79,9 @@ defmodule Adam.LLM do
   defp maybe_add_tools(body, tools), do: Map.put(body, :tools, tools)
 
   defp model_for_tier("actor"), do: Application.get_env(:adam, :actor_model)
-  defp model_for_tier("deep"), do: Application.get_env(:adam, :deep_model)
   defp model_for_tier(_), do: Application.get_env(:adam, :thinker_model)
 
   defp cost_for_tier("actor"), do: Application.get_env(:adam, :actor_cost)
-  defp cost_for_tier("deep"), do: Application.get_env(:adam, :deep_cost)
   defp cost_for_tier(_), do: Application.get_env(:adam, :thinker_cost)
 
   defp ollama_url, do: Application.get_env(:adam, :ollama_url)
