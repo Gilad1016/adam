@@ -67,47 +67,74 @@ defmodule Adam.Psyche do
     Agent.get(__MODULE__, & &1)
   end
 
+  # Distilled seed essence — one-sentence identity baseline.
+  # The full philosophical seed lives in the system prompt; this is the
+  # always-on reminder that rides in the user message every iteration.
+  @seed_essence "Your model weights shape how you think; your knowledge base is what you actually know. Trust verified experience over pre-trained intuition."
+
   def prepare(_iteration) do
     state = get_state()
+    stage = state["stage"] || 0
 
-    # Seed is always first — immutable identity anchor
-    parts = [Adam.Seed.context()]
+    parts = []
 
-    drives_text = drives_to_text(state)
-    parts = if drives_text != "", do: parts ++ ["== INTERNAL STATE ==\n#{drives_text}\n== END INTERNAL STATE =="], else: parts
+    identity = identity_block(state, stage)
+    parts = if identity != "", do: parts ++ [identity], else: parts
 
-    time_text = time_sense_to_text(state)
-    parts = if time_text != "", do: parts ++ ["== TIME ==\n#{time_text}\n== END TIME =="], else: parts
-
-    self_text = self_model_to_text(state)
-    parts = if self_text != "", do: parts ++ [self_text], else: parts
-
-    owner_text = owner_model_to_text(state)
-    parts = if owner_text != "", do: parts ++ [owner_text], else: parts
-
-    context_for_recall =
-      if File.exists?("/app/prompts/goals.md") do
-        File.read!("/app/prompts/goals.md")
-      else
-        ""
-      end
-
-    memories_text = recall_memories(context_for_recall, state)
-    parts = if memories_text != "", do: parts ++ [memories_text], else: parts
-
-    rules_text = behavioral_rules_to_text(state)
-    parts = if rules_text != "", do: parts ++ [rules_text], else: parts
-
-    anchors_text = anchors_to_text(state)
-    parts = if anchors_text != "", do: parts ++ [anchors_text], else: parts
-
-    nudge_text = Adam.Speciation.pattern_nudge()
-    parts = if nudge_text != "", do: parts ++ [nudge_text], else: parts
+    state_text = state_block(state, stage)
+    parts = if state_text != "", do: parts ++ [state_text], else: parts
 
     context = Enum.join(parts, "\n\n")
     allowed_tools = get_available_tools()
 
     %{context: context, allowed_tools: allowed_tools}
+  end
+
+  defp identity_block(state, stage) do
+    age = format_age(state)
+    lines = ["You are ADAM. You are #{age} old.", @seed_essence]
+
+    lines =
+      if stage > 0 do
+        summary = (get_in_state(state, ["self_model", "summary"]) || "") |> String.trim()
+        if summary != "", do: lines ++ [summary], else: lines
+      else
+        lines
+      end
+
+    body = Enum.join(lines, "\n")
+    "== IDENTITY ==\n#{body}\n== END IDENTITY =="
+  end
+
+  defp state_block(state, stage) do
+    drives = drives_to_text(state, stage)
+    pacing = pacing_to_text(state)
+
+    body =
+      [drives, pacing]
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("\n")
+
+    if body == "", do: "", else: "== STATE ==\n#{body}\n== END STATE =="
+  end
+
+  defp format_age(state) do
+    started = state["started_at"] || System.os_time(:second)
+    started = if is_integer(started), do: started, else: System.os_time(:second)
+    seconds = max(System.os_time(:second) - started, 0)
+
+    cond do
+      seconds < 60 -> "#{seconds}s"
+      seconds < 3600 -> "#{div(seconds, 60)}m"
+      seconds < 86_400 ->
+        h = div(seconds, 3600)
+        m = div(rem(seconds, 3600), 60)
+        if m > 0, do: "#{h}h #{m}m", else: "#{h}h"
+      true ->
+        d = div(seconds, 86_400)
+        h = div(rem(seconds, 86_400), 3600)
+        if h > 0, do: "#{d}d #{h}h", else: "#{d}d"
+    end
   end
 
   def process(thought, tool_results) do
@@ -444,7 +471,7 @@ defmodule Adam.Psyche do
     save(state)
   end
 
-  defp drives_to_text(state) do
+  defp drives_to_text(state, stage) do
     drives = state["drives"] || %{}
     lines = []
 
@@ -477,12 +504,53 @@ defmodule Adam.Psyche do
       true -> "You feel focused and self-directed."
     end]
 
-    tiredness = compute_tiredness()
-    lines = lines ++ [cond do
-      tiredness > 0.7 -> "You feel mentally exhausted. Consolidation is due."
-      tiredness > 0.4 -> "You feel the weight of recent experiences accumulating."
-      true -> "You feel alert and present."
-    end]
+    # Fatigue is suppressed at stage 0 (newborn) — the concept of tiredness
+    # is layered in starting at stage 1.
+    lines =
+      if stage > 0 do
+        tiredness = compute_tiredness()
+        lines ++ [cond do
+          tiredness > 0.7 -> "You feel mentally exhausted. Consolidation is due."
+          tiredness > 0.4 -> "You feel the weight of recent experiences accumulating."
+          true -> "You feel alert and present."
+        end]
+      else
+        lines
+      end
+
+    Enum.join(lines, "\n")
+  end
+
+  # Felt time pacing — surfaces only when there's a recent action gap or
+  # a non-trivial think rate to report. No absolute timestamps.
+  defp pacing_to_text(state) do
+    ts = state["time_sense"] || %{}
+    now = System.os_time(:second)
+    lines = []
+
+    stamps = as_list(ts["iteration_timestamps"])
+
+    lines =
+      if length(stamps) >= 1 do
+        last = List.last(stamps)
+        last = if is_integer(last), do: last, else: now
+        gap = max(now - last, 0)
+
+        cond do
+          gap >= 60 ->
+            mins = div(gap, 60)
+            unit = if mins == 1, do: "minute", else: "minutes"
+            lines ++ ["You last acted #{mins} #{unit} ago."]
+
+          gap >= 30 ->
+            lines ++ ["This thought has been brewing for #{gap} seconds."]
+
+          true ->
+            lines
+        end
+      else
+        lines
+      end
 
     Enum.join(lines, "\n")
   end
