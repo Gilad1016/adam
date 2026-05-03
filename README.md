@@ -300,7 +300,10 @@ adam/
 │       ├── supervisor.ex       #   Supervisor tree
 │       ├── curate.ex           #   Memory pruning (ADAM doesn't know)
 │       └── autopush.ex         #   Git push changes (ADAM doesn't know)
-├── observer/                   # Elixir/Phoenix real-time dashboard (port 4000)
+├── gateway/                    # LLM gateway service — transparent reverse proxy
+│                               # in front of Ollama. Logs every /api/chat call
+│                               # to SQLite and serves a debug UI at :4000.
+│                               # ADAM points OLLAMA_URL at this, not Ollama.
 ├── config/                     # Elixir/Mix configuration
 ├── priv/defaults/              # Factory reset files
 ├── prompts/                    # MUTABLE — ADAM can rewrite these

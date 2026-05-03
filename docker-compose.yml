@@ -39,15 +39,31 @@ services:
         done
     restart: "no"
 
+  gateway:
+    build:
+      context: ./gateway
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - DATABASE_PATH=/app/data/calls.db
+      - PORT=4000
+    ports:
+      - "4000:4000"                          # Dashboard at http://localhost:4000
+    volumes:
+      - gateway_data:/app/data
+    restart: unless-stopped
+
   adam:
     build: .
     depends_on:
       ollama-init:
         condition: service_completed_successfully
+      gateway:
+        condition: service_started
     environment:
-      - OLLAMA_URL=http://ollama:11434
-      - ADAM_OBSERVER_MODE=${ADAM_OBSERVER_MODE:-partial}   # off | partial | full
-      - OBSERVER_EVENTS_FILE=/app/observer/events.jsonl
+      - OLLAMA_URL=http://gateway:4000
     env_file:
       - .env
     volumes:
@@ -58,25 +74,8 @@ services:
       - ./memory:/app/memory
       - ./knowledge:/app/knowledge
       - sandbox:/app/sandbox
-      - observer_data:/app/observer          # ADAM writes events here
-
-  observer:
-    build:
-      context: ./observer
-    depends_on:
-      - adam
-    environment:
-      - ADAM_OBSERVER_MODE=${ADAM_OBSERVER_MODE:-partial}
-      - OBSERVER_EVENTS_FILE=/app/observer/events.jsonl
-      - OBSERVER_MAX_EVENTS=1000
-      - OBSERVER_POLL_MS=500
-      - PORT=4000
-    ports:
-      - "4000:4000"                          # Dashboard at http://localhost:4000
-    volumes:
-      - observer_data:/app/observer:ro       # observer reads events (read-only)
 
 volumes:
   ollama_data:
   sandbox:
-  observer_data:                             # shared: adam writes, observer reads
+  gateway_data:

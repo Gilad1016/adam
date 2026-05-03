@@ -102,7 +102,7 @@ No auth. Bound to localhost via Docker port mapping.
 - Replace `observer:` service with `gateway:` (build context `./gateway`, port `4000:4000`, volume `gateway_data:/app/data`).
 - Remove `observer_data` volume.
 - ADAM service env: change `OLLAMA_URL` from `http://ollama:11434` to `http://gateway:4000`. Remove `ADAM_OBSERVER_MODE` and `OBSERVER_EVENTS_FILE` env. Remove `observer_data` mount.
-- Gateway service env: `OLLAMA_URL=http://ollama:11434`, `DATABASE_PATH=/app/data/calls.db`, `PORT=4000`, `SECRET_KEY_BASE=<generated at first compose>`, `MIX_ENV=prod`.
+- Gateway service env: `OLLAMA_URL=http://ollama:11434`, `DATABASE_PATH=/app/data/calls.db`, `PORT=4000`, `MIX_ENV=dev` (local-only service; matches the original observer's pattern and avoids the prod-mode `SECRET_KEY_BASE` requirement).
 - Gateway depends on `ollama` (healthy). ADAM depends on `gateway` (started). The chain: `ollama → ollama-init → gateway → adam`.
 
 ## ADAM-side changes

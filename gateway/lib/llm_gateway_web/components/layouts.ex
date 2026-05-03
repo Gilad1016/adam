@@ -1,4 +1,4 @@
-defmodule ObserverWeb.Layouts do
+defmodule LlmGatewayWeb.Layouts do
   use Phoenix.Component
 
   embed_templates "layouts/*"

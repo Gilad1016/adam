@@ -1,4 +1,4 @@
-defmodule ObserverWeb.ErrorHTML do
+defmodule LlmGatewayWeb.ErrorHTML do
   use Phoenix.Component
 
   def render(template, _assigns) do
