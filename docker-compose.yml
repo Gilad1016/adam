@@ -26,10 +26,17 @@ services:
       - OLLAMA_NUM_PARALLEL=4
       # Faster attention kernel on Ampere+ GPUs.
       - OLLAMA_FLASH_ATTENTION=1
-      # Best-effort: silence Gin per-request access logs on Ollama versions
-      # that respect this. Undocumented; harmless if ignored. The healthcheck
-      # interval below is what actually dominates the noise reduction.
-      - OLLAMA_LOG_LEVEL=warn
+    # Ollama uses Gin's default logger middleware — there is NO env var to
+    # silence per-request access logs. Override the entrypoint to pipe
+    # `ollama serve` through grep, dropping only the noise lines (200 OK on
+    # the healthcheck and Docker probe). Real errors and non-2xx responses
+    # still come through. `--line-buffered` flushes per line so logs stay live.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        ollama serve 2>&1 |
+        grep --line-buffered -E -v
+        '\[GIN\][^|]*\|[[:space:]]*2[0-9][0-9][[:space:]]*\|[^|]*\|[^|]*\|[[:space:]]*(HEAD[[:space:]]+"/"|GET[[:space:]]+"/api/tags")'
     volumes:
       - ollama_data:/root/.ollama
     ports:
