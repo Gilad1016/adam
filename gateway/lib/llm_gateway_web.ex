@@ -1,15 +1,8 @@
-defmodule ObserverWeb do
+defmodule LlmGatewayWeb do
   def live_view do
     quote do
-      use Phoenix.LiveView, layout: {ObserverWeb.Layouts, :app}
+      use Phoenix.LiveView, layout: {LlmGatewayWeb.Layouts, :app}
       unquote(html_helpers())
-    end
-  end
-
-  def controller do
-    quote do
-      use Phoenix.Controller, namespace: ObserverWeb
-      import Plug.Conn
     end
   end
 

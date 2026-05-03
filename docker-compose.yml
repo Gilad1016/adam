@@ -1,5 +1,5 @@
 # Requires: copy .env.example to .env and set Gmail credentials (see README).
-# Stack: Ollama (LLM), ADAM (agent), Observer (dashboard http://localhost:4000).
+# Stack: Ollama (LLM) → gateway (logs every /api/chat call to SQLite, dashboard at :4000) → ADAM (agent).
 
 name: adam
 
@@ -19,16 +19,34 @@ services:
       retries: 18
       start_period: 60s
 
+  gateway:
+    build:
+      context: ./gateway
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - DATABASE_PATH=/app/data/calls.db
+      - PORT=4000
+    ports:
+      - "4000:4000"                          # Dashboard at http://localhost:4000
+    volumes:
+      - gateway_data:/app/data
+
   adam:
     build: .
     restart: unless-stopped
     depends_on:
+      gateway:
+        condition: service_started
       ollama:
         condition: service_healthy
     env_file:
       - .env
     environment:
-      OLLAMA_URL: http://ollama:11434
+      OLLAMA_URL: http://gateway:4000
     volumes:
       - ./lib:/app/lib:ro
       - ./prompts:/app/prompts
@@ -38,19 +56,8 @@ services:
       - ./knowledge:/app/knowledge
       - sandbox:/app/sandbox
       - ./checkpoints:/app/checkpoints
-      - observer_events:/app/observer
-
-  observer:
-    build:
-      context: ./observer
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    ports:
-      - "4000:4000"
-    volumes:
-      - observer_events:/app/observer
 
 volumes:
   ollama_data:
   sandbox:
-  observer_events:
+  gateway_data:
