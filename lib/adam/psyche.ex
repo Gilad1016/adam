@@ -20,11 +20,11 @@ defmodule Adam.Psyche do
   @consolidation_thresholds %{0 => 0.4, 1 => 0.5, 2 => 0.6, 3 => 0.7, 4 => 0.8}
 
   # Hard rate-limit: consolidation may fire at most once per N iterations even if tired.
-  @consolidation_min_iterations 20
+  # Tunable via Adam.Tuning.get(:consolidation_min_iterations).
 
   # Content guard: skip the deep-model call if we have less than this many chars to
   # consolidate. Prevents nearly-empty prompts from producing generic drivel.
-  @consolidation_min_chars 200
+  # Tunable via Adam.Tuning.get(:summarize_min_chars) (shared with compaction).
 
   # Maximum hourly budget spend used to normalise the budget_rate component
   @max_hourly_budget Application.compile_env(:adam, :max_hourly_budget, 5.0)
@@ -275,7 +275,7 @@ defmodule Adam.Psyche do
 
   @doc """
   Returns true when tiredness exceeds the threshold for the current stage AND
-  at least @consolidation_min_iterations have elapsed since the last consolidation.
+  at least Adam.Tuning.get(:consolidation_min_iterations) have elapsed since the last consolidation.
 
   The iteration gate is a hard rate limit: even at maximum tiredness we will not
   consolidate more often than once every N iterations.
@@ -288,7 +288,7 @@ defmodule Adam.Psyche do
     last_iter = state["last_consolidation_iteration"] || -999_999
     iters_since = iter - last_iter
 
-    iters_since >= @consolidation_min_iterations and compute_tiredness() >= threshold
+    iters_since >= Adam.Tuning.get(:consolidation_min_iterations) and compute_tiredness() >= threshold
   end
 
   @doc """
@@ -320,8 +320,9 @@ defmodule Adam.Psyche do
           |> String.slice(0, 4000)
 
         # Content guard: don't burn an LLM call on near-empty input.
-        if String.length(thoughts_text) < @consolidation_min_chars do
-          IO.puts("[TIREDNESS] Skipping deep synthesis: only #{String.length(thoughts_text)} chars of recent thoughts (< #{@consolidation_min_chars}).")
+        min_chars = Adam.Tuning.get(:summarize_min_chars)
+        if String.length(thoughts_text) < min_chars do
+          IO.puts("[TIREDNESS] Skipping deep synthesis: only #{String.length(thoughts_text)} chars of recent thoughts (< #{min_chars}).")
           nil
         else
           state = get_state()

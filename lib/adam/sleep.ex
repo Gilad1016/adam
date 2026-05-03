@@ -24,7 +24,7 @@ defmodule Adam.Sleep do
   """
 
   @training_data_file "/app/memory/sleep_training_data.jsonl"
-  @sleep_threshold 0.85
+  # Sleep trigger threshold is now tunable via Adam.Tuning.get(:sleep_threshold).
   @min_seconds_between_sleeps 3600
 
   @doc """
@@ -35,7 +35,7 @@ defmodule Adam.Sleep do
   def should_sleep? do
     tiredness = Adam.Psyche.compute_tiredness()
 
-    if tiredness < @sleep_threshold do
+    if tiredness < Adam.Tuning.get(:sleep_threshold) do
       false
     else
       last = last_sleep_at()

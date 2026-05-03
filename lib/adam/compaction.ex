@@ -12,7 +12,7 @@ defmodule Adam.Compaction do
   # (rate limit even when thresholds are exceeded — protects against thrash).
   @min_entries_between_compactions 20
   # Content guard: if the to-be-summarised body is shorter than this, skip the LLM call.
-  @summarize_min_chars 200
+  # Tunable via Adam.Tuning.get(:summarize_min_chars).
 
   def check do
     if File.exists?(@thought_log) do
@@ -125,8 +125,9 @@ defmodule Adam.Compaction do
     # Content guard: if there isn't enough material, skip the LLM call entirely
     # and emit a trivial placeholder so callers still see the compaction took
     # effect (entries got dropped) without burning tokens on empty input.
-    if String.length(context) < @summarize_min_chars do
-      IO.puts("[COMPACTION] Skipping LLM summarize: only #{String.length(context)} chars (< #{@summarize_min_chars}).")
+    min_chars = Adam.Tuning.get(:summarize_min_chars)
+    if String.length(context) < min_chars do
+      IO.puts("[COMPACTION] Skipping LLM summarize: only #{String.length(context)} chars (< #{min_chars}).")
       "[skipped: insufficient content to summarize — #{length(thoughts)} short entries dropped]"
     else
       result = Adam.LLM.think(prompt, context, [], kind: "infra.compact")
