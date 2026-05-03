@@ -1,38 +1,31 @@
-FROM python:3.12-slim
+FROM elixir:1.18
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    cron \
-    curl \
-    nodejs \
-    npm \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git make && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Build hex from source (avoids TLS issues with hex.pm)
+RUN git clone --depth 1 --branch v2.4.1 https://github.com/hexpm/hex.git /tmp/hex && \
+    cd /tmp/hex && MIX_ENV=prod mix archive.build -o /tmp/hex.ez && \
+    mix archive.install /tmp/hex.ez --force && \
+    rm -rf /tmp/hex
+
+# Build rebar3 from source
+RUN git clone --depth 1 https://github.com/erlang/rebar3.git /tmp/rebar3 && \
+    cd /tmp/rebar3 && ./bootstrap && \
+    mix local.rebar rebar3 /tmp/rebar3/rebar3 --force && \
+    rm -rf /tmp/rebar3
 
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY mix.exs mix.lock* ./
+RUN mix deps.get && \
+    rm -f deps/castore/lib/mix/tasks/certdata.ex && \
+    mix deps.compile
 
-COPY core/ /app/core/
-COPY prompts/ /app/prompts/
-COPY tools/ /app/tools/
-COPY defaults/ /app/defaults/
-COPY curator/ /app/curator/
+COPY config config
+COPY lib lib
+COPY priv priv
+RUN mix compile
 
-RUN mkdir -p /app/memory /app/knowledge /app/checkpoints /app/strategies \
-    /app/sandbox/projects /app/sandbox/services /app/sandbox/scripts
-
-RUN touch /app/memory/experiences.toon \
-    && touch /app/memory/self_model.toon \
-    && touch /app/memory/goals.toon
-
-# Invisible cron jobs — agent does not know these exist
-# Curator: prune old memories every 30 min
-# Autopush: checkpoint and git push every 15 min
-RUN echo "*/30 * * * * cd /app && python3 -m curator.curate >> /app/curator/curator.log 2>&1" > /etc/cron.d/adam-bg \
-    && echo "*/15 * * * * cd /app && python3 -m curator.autopush >> /app/curator/autopush.log 2>&1" >> /etc/cron.d/adam-bg \
-    && chmod 0644 /etc/cron.d/adam-bg \
-    && crontab /etc/cron.d/adam-bg
-
-CMD cron && python -u -m core.loop
+CMD ["mix", "run", "--no-halt"]
