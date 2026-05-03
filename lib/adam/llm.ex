@@ -2,6 +2,7 @@ defmodule Adam.LLM do
   def think(system_prompt, context, tools \\ [], opts \\ []) do
     tier = Keyword.get(opts, :tier, "thinker")
     model = model_for_tier(tier)
+    kind = Keyword.get(opts, :kind, "agent.think")
 
     messages = [
       %{role: "system", content: system_prompt},
@@ -14,7 +15,11 @@ defmodule Adam.LLM do
 
     # Local Ollama can take several minutes on cold model load or large
     # seed-prefixed contexts (consolidation, self-critique). Keep generous.
-    case Req.post(ollama_url() <> "/api/chat", json: body, receive_timeout: 600_000) do
+    case Req.post(ollama_url() <> "/api/chat",
+           json: body,
+           headers: [{"x-adam-kind", kind}],
+           receive_timeout: 600_000
+         ) do
       {:ok, %{status: 200, body: resp}} ->
         parse_response(resp, tier)
 

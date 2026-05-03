@@ -4,8 +4,8 @@ defmodule LlmGateway.Calls do
 
   Stores the raw request and response JSON so any future analytic can be
   derived without re-running the call. A few obvious fields are denormalized
-  at insert time (model, tokens, tool count) to keep the list view fast and
-  give future analytics free indexes.
+  at insert time (model, tokens, tool count, kind) to keep the list view
+  fast and give future analytics free indexes.
   """
 
   use Ecto.Schema
@@ -26,12 +26,13 @@ defmodule LlmGateway.Calls do
     field :completion_tokens, :integer
     field :tool_call_count, :integer
     field :stream, :boolean, default: false
+    field :kind, :string, default: "agent"
 
     timestamps(type: :utc_datetime_usec, updated_at: false)
   end
 
   @cast_fields ~w(request_id model request response status duration_ms error
-                  prompt_tokens completion_tokens tool_call_count stream)a
+                  prompt_tokens completion_tokens tool_call_count stream kind)a
   @required_fields ~w(request_id request status duration_ms)a
 
   def insert(attrs) do
@@ -55,10 +56,22 @@ defmodule LlmGateway.Calls do
     offset = (page - 1) * per
 
     from(c in __MODULE__, order_by: [desc: c.id], limit: ^per, offset: ^offset)
+    |> apply_kind_filter(Keyword.get(opts, :kind))
     |> Repo.all()
   end
 
-  def count, do: Repo.aggregate(__MODULE__, :count, :id)
+  def count(opts \\ []) do
+    from(c in __MODULE__, select: count(c.id))
+    |> apply_kind_filter(Keyword.get(opts, :kind))
+    |> Repo.one()
+  end
 
   def get(id), do: Repo.get(__MODULE__, id)
+
+  defp apply_kind_filter(query, nil), do: query
+
+  defp apply_kind_filter(query, kind) when is_binary(kind) do
+    pattern = kind <> "%"
+    from c in query, where: like(c.kind, ^pattern)
+  end
 end
