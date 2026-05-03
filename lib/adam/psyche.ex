@@ -289,7 +289,7 @@ defmodule Adam.Psyche do
         Format each insight as a bullet point starting with a verb (e.g. "Prefer X when Y").
         """
 
-        result = Adam.LLM.think(prompt, context, [], tier: "deep")
+        result = Adam.LLM.think(prompt, context, [], tier: "thinker")
 
         if String.starts_with?(result.content, "[LLM ERROR") do
           IO.puts("[TIREDNESS] Deep model call failed: #{result.content}")
