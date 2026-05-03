@@ -64,6 +64,12 @@ defmodule Adam.Sleep do
 
     check_regression_and_rollback(regression_snapshot)
 
+    try do
+      Adam.Narrative.regenerate()
+    rescue
+      e -> IO.puts("[SLEEP] Narrative regen failed: #{Exception.message(e)}")
+    end
+
     Adam.Seed.record_sleep(consolidated_count, training_examples)
     reset_tiredness()
 

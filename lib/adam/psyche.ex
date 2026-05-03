@@ -103,6 +103,9 @@ defmodule Adam.Psyche do
     age = format_age(state)
     lines = ["You are ADAM. You are #{age} old.", @seed_essence]
 
+    narrative = Adam.Narrative.read()
+    lines = if narrative != "", do: lines ++ [narrative], else: lines
+
     lines =
       if stage > 0 do
         summary = (get_in_state(state, ["self_model", "summary"]) || "") |> String.trim()

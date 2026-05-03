@@ -64,6 +64,16 @@ defmodule LlmGateway.Admin do
     File.write(Path.join(prompts_dir(), name <> ".md"), content)
   end
 
+  @doc "Read ADAM's current narrative identity. Empty string if none yet."
+  def narrative do
+    path = Path.join(memory_dir(), "narrative.md")
+
+    case File.read(path) do
+      {:ok, content} -> String.trim(content)
+      _ -> ""
+    end
+  end
+
   def wipe_memory, do: wipe_dir(memory_dir())
   def wipe_knowledge, do: wipe_dir(knowledge_dir())
   def wipe_checkpoints, do: wipe_dir(checkpoints_dir())
