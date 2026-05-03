@@ -17,16 +17,6 @@
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
-    <script src="https://cdn.jsdelivr.net/npm/phoenix@1.7.14/priv/static/phoenix.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/phoenix_live_view@1.1.28/priv/static/phoenix_live_view.min.js"></script>
-    <script>
-      const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
-      const liveSocket = new window.LiveView.LiveSocket("/live", window.Phoenix.Socket, {
-        params: { _csrf_token: csrfToken }
-      });
-      liveSocket.connect();
-      window.liveSocket = liveSocket;
-    </script>
     <style>
       body { background-color: #030712; }
       ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -37,5 +27,23 @@
   </head>
   <body class="bg-gray-950 text-gray-100 font-mono antialiased">
     <%= @inner_content %>
+    <script defer src="https://cdn.jsdelivr.net/npm/phoenix@1.7.14/priv/static/phoenix.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/phoenix_live_view@1.1.28/priv/static/phoenix_live_view.min.js"></script>
+    <script>
+      window.addEventListener("load", function () {
+        if (!window.Phoenix || !window.LiveView) {
+          console.error("[gateway] LV bundles not loaded — Phoenix:", !!window.Phoenix, "LiveView:", !!window.LiveView);
+          return;
+        }
+        const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
+        const liveSocket = new window.LiveView.LiveSocket("/live", window.Phoenix.Socket, {
+          params: { _csrf_token: csrfToken }
+        });
+        liveSocket.connect();
+        liveSocket.enableDebug();
+        window.liveSocket = liveSocket;
+        console.log("[gateway] LiveSocket initialized");
+      });
+    </script>
   </body>
 </html>
