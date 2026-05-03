@@ -6,6 +6,13 @@ defmodule Adam.Loop do
   # Per-stage: narrower context for younger stages, wider for older.
   @history_user_turns_per_stage %{0 => 4, 1 => 6, 2 => 8, 3 => 12, 4 => 16}
 
+  # Persisted rolling-conversation state. Restored on init so the agent's
+  # immediate working memory survives container restarts. Bump
+  # @state_schema_version when the message shape changes — old persisted
+  # state is then ignored and the loop starts clean.
+  @state_file "/app/memory/loop_state.toon"
+  @state_schema_version 1
+
   def start_link(_), do: GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
 
   def reset_history, do: GenServer.cast(__MODULE__, :reset_history)
@@ -20,12 +27,25 @@ defmodule Adam.Loop do
     IO.puts("[ADAM] Models: #{model_status}")
     IO.puts("[ADAM] Stage: #{Adam.Psyche.get_stage()} (#{Adam.Psyche.get_stage_name()})")
     IO.puts("[ADAM] Balance: $#{Adam.Safety.get_balance()}")
+
+    state =
+      case load_persisted_state() do
+        %{iteration: i, messages: m} ->
+          IO.puts("[LOOP] resumed from persisted state: iter=#{i}, msgs=#{length(m)}")
+          %{iteration: i, messages: m, last_checkpoint: System.os_time(:second)}
+
+        nil ->
+          %{iteration: 0, messages: [], last_checkpoint: System.os_time(:second)}
+      end
+
     send(self(), :iterate)
-    {:ok, %{iteration: 0, last_checkpoint: System.os_time(:second), messages: []}}
+    {:ok, state}
   end
 
   def handle_cast(:reset_history, state) do
-    {:noreply, %{state | messages: []}}
+    new_state = %{state | messages: []}
+    persist_state(new_state)
+    {:noreply, new_state}
   end
 
   def handle_info(:iterate, state) do
@@ -59,8 +79,11 @@ defmodule Adam.Loop do
         state
       end
 
+    state = %{state | iteration: iteration}
+    persist_state(state)
+
     send(self(), :iterate)
-    {:noreply, %{state | iteration: iteration}}
+    {:noreply, state}
   end
 
   defp iterate(iteration, state) do
@@ -280,5 +303,86 @@ defmodule Adam.Loop do
     else
       state
     end
+  end
+
+  # Persist iteration counter + rolling messages so the agent's immediate
+  # working memory survives container restarts. Failure here is non-fatal
+  # — better to lose this iteration's persistence than to crash the loop.
+  defp persist_state(state) do
+    payload = %{
+      "schema_version" => @state_schema_version,
+      "iteration" => state.iteration,
+      "messages" => state.messages
+    }
+
+    Adam.AtomicFile.write!(@state_file, Adam.Toon.encode(payload))
+  rescue
+    e -> IO.puts("[LOOP] state persist failed: #{Exception.message(e)}")
+  end
+
+  # Restore persisted iteration + messages with progressive-recovery on
+  # decode failure: pop the last message and try again, until something
+  # parses or the list is empty. This way a single corrupted message at
+  # the tail (e.g., a partial write before atomic-rename was deployed,
+  # or a structural quirk in one turn) doesn't cost the whole history.
+  defp load_persisted_state do
+    case File.read(@state_file) do
+      {:ok, content} ->
+        try_decode_with_rollback(content)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp try_decode_with_rollback(content) do
+    case decode_state(content) do
+      {:ok, %{iteration: i, messages: messages}} ->
+        recover_messages(i, messages, length(messages))
+
+      _ ->
+        nil
+    end
+  end
+
+  defp recover_messages(_i, _messages, attempts) when attempts < 0, do: nil
+
+  defp recover_messages(i, messages, attempts) do
+    if valid_messages?(messages) do
+      %{iteration: i, messages: messages}
+    else
+      case messages do
+        [] ->
+          nil
+
+        _ ->
+          IO.puts("[LOOP] dropping last message and retrying restore (attempt #{length(messages)})")
+          recover_messages(i, Enum.drop(messages, -1), attempts - 1)
+      end
+    end
+  end
+
+  defp decode_state(content) do
+    case Adam.Toon.decode(content) do
+      %{"schema_version" => @state_schema_version, "iteration" => i, "messages" => m}
+      when is_integer(i) and is_list(m) ->
+        {:ok, %{iteration: i, messages: m}}
+
+      _ ->
+        :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  # A messages list is valid if every entry is a map with at least a
+  # string "role" field. Catches partial-write tails that decode but
+  # produce malformed turns.
+  defp valid_messages?(messages) do
+    Enum.all?(messages, fn
+      %{"role" => r} when is_binary(r) -> true
+      %{role: r} when is_binary(r) -> true
+      _ -> false
+    end)
   end
 end

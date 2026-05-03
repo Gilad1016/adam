@@ -141,7 +141,7 @@ defmodule Adam.Sleep do
       content = Enum.map_join(lines, "\n", &Jason.encode!/1)
 
       File.mkdir_p!(Path.dirname(@training_data_file))
-      File.write!(@training_data_file, content <> "\n")
+      Adam.AtomicFile.write!(@training_data_file, content <> "\n")
 
       length(lines)
     end
@@ -371,7 +371,7 @@ defmodule Adam.Sleep do
     # by writing a trigger file. The trainer watches for this file, runs training,
     # and removes it when done.
     trigger_file = "/app/memory/finetune_requested"
-    File.write!(trigger_file, Jason.encode!(%{
+    Adam.AtomicFile.write!(trigger_file, Jason.encode!(%{
       "requested_at" => System.os_time(:second),
       "training_data" => @training_data_file,
       "model" => Application.get_env(:adam, :model)

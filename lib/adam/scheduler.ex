@@ -82,6 +82,6 @@ defmodule Adam.Scheduler do
   end
 
   defp save_routines(routines) do
-    File.write!(@routines_file, Adam.Toon.encode(routines))
+    Adam.AtomicFile.write!(@routines_file, Adam.Toon.encode(routines))
   end
 end

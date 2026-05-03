@@ -837,7 +837,7 @@ defmodule Adam.Psyche do
 
     if signals != [] do
       File.mkdir_p!(Path.dirname(@signals_file))
-      File.write!(@signals_file, Adam.Toon.encode(signals))
+      Adam.AtomicFile.write!(@signals_file, Adam.Toon.encode(signals))
     end
   end
 
@@ -1178,7 +1178,7 @@ defmodule Adam.Psyche do
   defp save(state) do
     Agent.update(__MODULE__, fn _ -> state end)
     File.mkdir_p!(Path.dirname(@psyche_file))
-    File.write!(@psyche_file, Adam.Toon.encode(state))
+    Adam.AtomicFile.write!(@psyche_file, Adam.Toon.encode(state))
   end
 
   defp get_in_state(state, keys) do

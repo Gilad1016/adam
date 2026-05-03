@@ -44,7 +44,7 @@ defmodule Adam.Safety do
 
   def save_budget(budget) do
     File.mkdir_p!(Path.dirname(@budget_file))
-    File.write!(@budget_file, Adam.Toon.encode(budget))
+    Adam.AtomicFile.write!(@budget_file, Adam.Toon.encode(budget))
   end
 
   def get_balance, do: load_budget() |> Map.get("balance", 0)
