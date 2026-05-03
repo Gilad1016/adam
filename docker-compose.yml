@@ -6,6 +6,8 @@ name: adam
 services:
   ollama:
     image: ollama/ollama:latest
+    environment:
+      - GIN_MODE=release
     volumes:
       - ollama_data:/root/.ollama
     ports:
