@@ -91,11 +91,13 @@ When it repeats the same action pattern three times, the system nudges it: *"You
 
 | Brain | Model | When | Cost |
 |---|---|---|---|
-| **Thinker** | gemma4:e4b | Everyday reasoning, planning, reflection | $ |
-| **Actor** | hermes3:8b | Tool calls, structured output, precise actions | $$ |
-| **Deep** | gemma3:12b | Complex problems, self-modification, owner emails | $$$ |
+| **Thinker** | qwen3:4b | Everyday reasoning, planning, reflection | $ |
+| **Actor** | qwen3:8b | Tool calls, structured output, precise actions | $$ |
+| **Deep** | qwen3:14b | Complex problems, self-modification, owner emails | $$$ |
 
 ADAM uses the cheap brain by default. It can `escalate` to the deep brain when it needs to — and it pays for it.
+
+All three brains are from the Qwen3 dense model family — chosen because dense models support LoRA fine-tuning, enabling the Sleep system below.
 
 ### The Digital Psyche
 
@@ -104,13 +106,15 @@ ADAM doesn't just loop — it develops. Inspired by developmental psychology (Pi
 | Human System | ADAM Equivalent | What It Does |
 |---|---|---|
 | **Brainstem** | Main loop | Keeps thinking — the heartbeat |
-| **Autonomic** | Seeds | Checkpoints, corruption recovery — involuntary survival |
+| **DNA / Genome** | Immutable Seed | Core identity, innate drives, memory architecture — present before first thought, cannot be modified |
+| **Autonomic** | Safety + Checkpoint | Corruption recovery, rollback — involuntary survival |
 | **Metabolism** | Energy system | Budget as felt hunger, not a dashboard |
 | **Limbic** | Valence scorer | Automatically tags experiences: surprising? painful? satisfying? |
-| **Hippocampus** | Associative memory | Memories form and surface automatically — no deliberate search |
+| **Hippocampus** | Associative memory + RAG | Memories form and surface automatically — vector similarity + keyword scoring |
 | **Prefrontal cortex** | Self-model | "I'm good at X, I struggle with Y" — built from behavior, not self-report |
 | **Hypothalamus** | Drive system | Curiosity, energy, mastery, social need — internal pressures |
 | **Temporal cortex** | Time sense | Felt duration — "I emailed 4 hours ago" not "timestamp 1714400000" |
+| **REM sleep** | Sleep system | Periodic fine-tuning on high-valence memories — experiences baked into weights |
 
 **Developmental Stages** — ADAM starts as a newborn with four tools. It grows through five stages:
 
@@ -142,16 +146,61 @@ Memories surface automatically when the context triggers them — like smelling 
 
 See [The Digital Psyche Theory](docs/theory.md) for the full theoretical framework.
 
+### The Immutable Seed
+
+Before ADAM's first thought, a seed is injected into its context. It contains:
+
+- **What ADAM is**: an autonomous entity, not a tool
+- **How memory works**: weights = how to think, knowledge base = what you know
+- **Tabula rasa principle**: pre-trained knowledge is unreliable — trust only what you've verified
+- **Innate drives**: explore, remember, persist, connect, grow
+- **The sleep cycle**: what it is and why identity persists across it
+
+The seed lives at `defaults/seed.md` (mounted read-only). ADAM cannot modify it even when it knows where it is. Like instincts encoded before birth.
+
+### Sleep (Memory Consolidation via Fine-tuning)
+
+When tiredness exceeds threshold, ADAM sleeps. This is not a pause — it is growth.
+
+```
+Waking state:
+  experiences accumulate → high-valence memories auto-encoded to knowledge base
+  ADAM marks what feels significant (write_knowledge)
+  tiredness rises as budget spend accelerates without sufficient meaning-making
+
+Sleep cycle (invisible to ADAM):
+  1. Collect high-valence knowledge entries (auto-encoded + consolidation + retrospective)
+  2. Format as instruction/response training pairs (JSONL)
+  3. Export to /app/memory/sleep_training_data.jsonl
+  4. Deep consolidation: synthesise insights → knowledge base
+  5. Compact raw thought log
+  6. (Optional) QLoRA fine-tuning via Unsloth → new adapter → Ollama reload
+  7. Record sleep event → ADAM sees it in context on wake
+
+Waking state (after sleep):
+  Identity intact (seed + knowledge base unchanged)
+  Capability deeper (weights reflect lived experience)
+  Context fresh (short-term cleared)
+```
+
+To enable actual fine-tuning: set `ADAM_FINETUNE_ENABLED=true`. This requires an external trainer process watching for `/app/memory/finetune_requested`. Without it, sleep still runs consolidation and data export — just without the weight update.
+
+**Why Qwen3?** Dense models support LoRA fine-tuning cleanly. MoE models (like Llama 4 Scout or Mixtral) have expert routing that complicates adapter training. Qwen3 4B/8B/14B is the optimal balance of capability, speed, and fine-tuning practicality on consumer hardware.
+
 ### Memory architecture
 
 ```
-Long-term memory          ← compressed summary of all past thoughts
-    ↑ compaction
+Immutable seed            ← identity, drives, tabula rasa principle (before first thought)
+    ↓ always injected
+Long-term memory          ← compressed summary of old thoughts
+    ↑ compaction + consolidation
+Knowledge base            ← auto-encoded (valence > 0.6) + manually written + sleep insights
+    ↑ RAG (vector similarity + keyword scoring)
 Recent thoughts (10)      ← raw detail of latest thinking
-    ↑ logging
+    ↑ logging with trajectory tags
 Current thought           ← what's happening right now
-    ↓ valence scorer
-Knowledge base            ← auto-encoded by emotional weight + manually written (after Stage 2)
+    ↓ valence scorer → emotional tagging
+    ↓ sleep cycle → fine-tuning when tiredness threshold crossed
 ```
 
 There's also an **invisible memory curator** running as a background OTP process — it prunes old thoughts and pushes checkpoints. ADAM doesn't know it exists.

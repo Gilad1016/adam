@@ -35,6 +35,8 @@ defmodule Adam.Loop do
 
     if rem(iteration, 10) == 0, do: Adam.Psyche.emit_signals()
 
+    if Adam.Sleep.should_sleep?(), do: Adam.Sleep.run()
+
     send(self(), :iterate)
     {:noreply, %{state | iteration: iteration}}
   end

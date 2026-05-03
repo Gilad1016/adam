@@ -67,7 +67,9 @@ defmodule Adam.Psyche do
 
   def prepare(_iteration) do
     state = get_state()
-    parts = []
+
+    # Seed is always first — immutable identity anchor
+    parts = [Adam.Seed.context()]
 
     drives_text = drives_to_text(state)
     parts = if drives_text != "", do: parts ++ ["== INTERNAL STATE ==\n#{drives_text}\n== END INTERNAL STATE =="], else: parts
@@ -180,6 +182,8 @@ defmodule Adam.Psyche do
 
   def get_stage, do: (get_state()["stage"] || 0)
   def get_stage_name, do: @stage_names[get_stage()]
+
+  def save_state(state), do: save(state)
 
   # ---------------------------------------------------------------------------
   # TIREDNESS & DEEP CONSOLIDATION

@@ -26,9 +26,9 @@ services:
         condition: service_healthy
     environment:
       - OLLAMA_HOST=http://ollama:11434
-      - ADAM_THINKER_MODEL=${ADAM_THINKER_MODEL:-gemma4:e4b}
-      - ADAM_ACTOR_MODEL=${ADAM_ACTOR_MODEL:-hermes3:8b}
-      - ADAM_DEEP_MODEL=${ADAM_DEEP_MODEL:-gemma3:12b}
+      - ADAM_THINKER_MODEL=${ADAM_THINKER_MODEL:-qwen3:4b}
+      - ADAM_ACTOR_MODEL=${ADAM_ACTOR_MODEL:-qwen3:8b}
+      - ADAM_DEEP_MODEL=${ADAM_DEEP_MODEL:-qwen3:14b}
       - ADAM_EMBED_MODEL=${ADAM_EMBED_MODEL:-nomic-embed-text}
     entrypoint: ["/bin/sh", "-c"]
     command:
