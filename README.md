@@ -183,7 +183,7 @@ Waking state (after sleep):
   Context fresh (short-term cleared)
 ```
 
-To enable actual fine-tuning: set `ADAM_FINETUNE_ENABLED=true`. This requires an external trainer process watching for `/app/memory/finetune_requested`. Without it, sleep still runs consolidation and data export — just without the weight update.
+To enable actual fine-tuning: set `ADAM_FINETUNE_ENABLED=true`. The trainer process lives in [`trainer/`](trainer/) — a host-side Python script that watches `memory/finetune_requested`, runs QLoRA via Unsloth, converts the adapter to GGUF, and registers a new `adam-finetuned-<ts>` Ollama tag. See `trainer/README.md` for setup. Without the trainer running, sleep still consolidates and exports data — only the weight update is skipped.
 
 **Why Qwen3?** Dense models support LoRA fine-tuning cleanly. MoE models (like Llama 4 Scout or Mixtral) have expert routing that complicates adapter training. Qwen3 4B/8B/14B is the optimal balance of capability, speed, and fine-tuning practicality on consumer hardware.
 

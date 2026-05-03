@@ -1,0 +1,14 @@
+# Pinned to versions known to support Qwen3 and Gemma 3 4-bit fine-tuning
+# under Unsloth. Bump in lockstep — Unsloth tracks transformers/trl tightly.
+unsloth==2025.10.7
+unsloth_zoo==2025.10.6
+transformers==4.56.2
+peft==0.14.0
+trl==0.23.0
+datasets==3.6.0
+accelerate==1.10.1
+bitsandbytes==0.48.1
+sentencepiece==0.2.0
+protobuf==5.29.3
+# torch is intentionally NOT pinned here — install the CUDA build matching
+# the host driver first (see README), then `pip install -r requirements.txt`.
