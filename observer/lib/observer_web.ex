@@ -6,6 +6,13 @@ defmodule ObserverWeb do
     end
   end
 
+  def controller do
+    quote do
+      use Phoenix.Controller, namespace: ObserverWeb
+      import Plug.Conn
+    end
+  end
+
   def router do
     quote do
       use Phoenix.Router, helpers: false

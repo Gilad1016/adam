@@ -1,55 +1,32 @@
+# Requires: copy .env.example to .env and set Gmail credentials (see README).
+# Stack: Ollama (LLM), ADAM (agent), Observer (dashboard http://localhost:4000).
+
+name: adam
+
 services:
   ollama:
-    image: ollama/ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    image: ollama/ollama:latest
     volumes:
       - ollama_data:/root/.ollama
     ports:
       - "11434:11434"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 10s
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 5s
       timeout: 5s
-      retries: 10
-      start_period: 20s
-
-  ollama-init:
-    image: ollama/ollama
-    depends_on:
-      ollama:
-        condition: service_healthy
-    environment:
-      - OLLAMA_HOST=http://ollama:11434
-      - ADAM_THINKER_MODEL=${ADAM_THINKER_MODEL:-qwen3:4b}
-      - ADAM_ACTOR_MODEL=${ADAM_ACTOR_MODEL:-qwen3:8b}
-      - ADAM_DEEP_MODEL=${ADAM_DEEP_MODEL:-qwen3:14b}
-      - ADAM_EMBED_MODEL=${ADAM_EMBED_MODEL:-nomic-embed-text}
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        for model in "$ADAM_THINKER_MODEL" "$ADAM_ACTOR_MODEL" "$ADAM_DEEP_MODEL" "$ADAM_EMBED_MODEL"; do
-          echo "Pulling $$model...";
-          ollama pull "$$model" || echo "WARNING: failed to pull $$model";
-        done
-    restart: "no"
+      retries: 18
+      start_period: 60s
 
   adam:
     build: .
+    restart: unless-stopped
     depends_on:
-      ollama-init:
-        condition: service_completed_successfully
-    environment:
-      - OLLAMA_URL=http://ollama:11434
-      - ADAM_OBSERVER_MODE=${ADAM_OBSERVER_MODE:-partial}   # off | partial | full
-      - OBSERVER_EVENTS_FILE=/app/observer/events.jsonl
+      ollama:
+        condition: service_healthy
     env_file:
       - .env
+    environment:
+      OLLAMA_URL: http://ollama:11434
     volumes:
       - ./lib:/app/lib:ro
       - ./prompts:/app/prompts
@@ -58,25 +35,20 @@ services:
       - ./memory:/app/memory
       - ./knowledge:/app/knowledge
       - sandbox:/app/sandbox
-      - observer_data:/app/observer          # ADAM writes events here
+      - ./checkpoints:/app/checkpoints
+      - observer_events:/app/observer
 
   observer:
     build:
       context: ./observer
-    depends_on:
-      - adam
-    environment:
-      - ADAM_OBSERVER_MODE=${ADAM_OBSERVER_MODE:-partial}
-      - OBSERVER_EVENTS_FILE=/app/observer/events.jsonl
-      - OBSERVER_MAX_EVENTS=1000
-      - OBSERVER_POLL_MS=500
-      - PORT=4000
+      dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
-      - "4000:4000"                          # Dashboard at http://localhost:4000
+      - "4000:4000"
     volumes:
-      - observer_data:/app/observer:ro       # observer reads events (read-only)
+      - observer_events:/app/observer
 
 volumes:
   ollama_data:
   sandbox:
-  observer_data:                             # shared: adam writes, observer reads
+  observer_events:

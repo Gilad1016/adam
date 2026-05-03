@@ -8,7 +8,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Cache deps separately from source
-COPY mix.exs mix.lock* ./
+COPY mix.exs mix.lock ./
 RUN mix local.hex --force && \
     mix local.rebar --force && \
     mix deps.get

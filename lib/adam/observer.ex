@@ -97,7 +97,7 @@ defmodule Adam.Observer do
   defp parse_context_sections(context) do
     lines = String.split(context, "\n")
 
-    {sections, current_label, current_lines, pre_lines} =
+    {sections, _current_label, current_lines, pre_lines} =
       Enum.reduce(lines, {[], nil, [], []}, fn line, {sections, label, acc, pre} ->
         cond do
           label == nil and Regex.match?(~r/^== .+ ==$/, String.trim(line)) ->

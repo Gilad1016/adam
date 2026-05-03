@@ -1,0 +1,16 @@
+.git
+.github
+.worktrees
+.claude
+docs
+**/_build
+**/deps
+**/erl_crash.dump
+.env
+memory
+knowledge
+checkpoints
+sandbox
+**/*.pyc
+__pycache__
+adam_ex
