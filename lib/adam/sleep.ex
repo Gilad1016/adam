@@ -51,6 +51,8 @@ defmodule Adam.Sleep do
   def run do
     IO.puts("[SLEEP] Sleep cycle starting (tiredness=#{Float.round(Adam.Psyche.compute_tiredness(), 3)})")
 
+    regression_snapshot = capture_regression_snapshot()
+
     {consolidated_count, training_examples} =
       try do
         do_run()
@@ -59,6 +61,8 @@ defmodule Adam.Sleep do
           IO.puts("[SLEEP] Error during sleep: #{Exception.message(e)}")
           {0, 0}
       end
+
+    check_regression_and_rollback(regression_snapshot)
 
     Adam.Seed.record_sleep(consolidated_count, training_examples)
     reset_tiredness()
@@ -221,6 +225,140 @@ defmodule Adam.Sleep do
   defp finetune_enabled? do
     System.get_env("ADAM_FINETUNE_ENABLED", "false") == "true"
   end
+
+  # ---------------------------------------------------------------------------
+  # Tuning regression hook
+  #
+  # Snapshot mean valence at sleep start, compare to mean valence at sleep end,
+  # and if valence dropped materially, roll back the most recent agent-sourced
+  # tuning change inside the configured window. Operator and rollback entries
+  # are excluded — operator changes are intentional human will, and rolling
+  # back a rollback would oscillate.
+  #
+  # The hook is wrapped in try/rescue at every step so any failure (missing
+  # state, knowledge write error, history corruption, etc.) just logs and
+  # continues sleep. Sleep MUST NOT crash because of this hook.
+  # ---------------------------------------------------------------------------
+
+  defp capture_regression_snapshot do
+    try do
+      sample_size = Adam.Tuning.get(:sleep_valence_sample_size)
+      window_seconds = Adam.Tuning.get(:sleep_regression_window_seconds)
+
+      vh =
+        case Adam.Psyche.get_state() do
+          %{} = state -> state["valence_history"] || []
+          _ -> []
+        end
+
+      vh = if is_list(vh), do: vh, else: []
+
+      if length(vh) < 5 do
+        nil
+      else
+        %{
+          pre_sleep_valence: mean_last_n(vh, sample_size),
+          tuning_window_start_ts: System.os_time(:second) - window_seconds,
+          sample_size: sample_size
+        }
+      end
+    rescue
+      e ->
+        IO.puts("[SLEEP] Regression snapshot failed: #{Exception.message(e)}")
+        nil
+    end
+  end
+
+  defp check_regression_and_rollback(nil), do: :ok
+
+  defp check_regression_and_rollback(%{pre_sleep_valence: pre, tuning_window_start_ts: window_start, sample_size: sample_size}) do
+    try do
+      threshold = Adam.Tuning.get(:sleep_regression_threshold_pct)
+
+      vh =
+        case Adam.Psyche.get_state() do
+          %{} = state -> state["valence_history"] || []
+          _ -> []
+        end
+
+      vh = if is_list(vh), do: vh, else: []
+      post = mean_last_n(vh, sample_size)
+
+      delta_pct = (post - pre) / max(abs(pre), 0.01)
+
+      if delta_pct >= -threshold do
+        IO.puts("[SLEEP] valence held: pre=#{Float.round(pre * 1.0, 3)} post=#{Float.round(post * 1.0, 3)}")
+        :ok
+      else
+        now = System.os_time(:second)
+
+        target =
+          Adam.Tuning.history()
+          |> Enum.filter(fn entry ->
+            entry["source"] == "agent" and
+              is_integer(entry["ts"]) and
+              entry["ts"] >= window_start and
+              entry["ts"] <= now
+          end)
+          |> List.last()
+
+        case target do
+          nil ->
+            IO.puts("[SLEEP] valence regressed but no recent agent tunings to rollback (delta=#{Float.round(delta_pct * 100.0, 1)}%)")
+            :ok
+
+          %{"name" => name} = entry ->
+            try do
+              knob = String.to_existing_atom(name)
+              IO.puts("[SLEEP] valence regressed #{Float.round(delta_pct * 100.0, 1)}%; rolling back agent tuning '#{name}'")
+              Adam.Tuning.rollback(knob, 1)
+              write_regression_knowledge(entry, pre, post, delta_pct)
+            rescue
+              e -> IO.puts("[SLEEP] Rollback failed for #{name}: #{Exception.message(e)}")
+            end
+        end
+      end
+    rescue
+      e -> IO.puts("[SLEEP] Regression check failed: #{Exception.message(e)}")
+    end
+  end
+
+  defp write_regression_knowledge(entry, pre, post, delta_pct) do
+    try do
+      drop_pct = Float.round(abs(delta_pct) * 100.0, 1)
+
+      body = """
+      Tuning regression detected during sleep.
+      - Knob: #{entry["name"]}
+      - Tried value: #{inspect(entry["value"])}; reverted to: #{inspect(entry["previous"])}
+      - Reason given: #{entry["reason"]}
+      - Pre-sleep valence: #{Float.round(pre * 1.0, 3)}; post-sleep: #{Float.round(post * 1.0, 3)} (-#{drop_pct}%)
+      This change degraded my recent experience. Avoid trying it again under similar conditions.
+      """
+
+      Adam.Knowledge.write(
+        "tuning regression: #{entry["name"]}",
+        body,
+        ["tuning", "regression", "auto-rollback", "lesson"]
+      )
+    rescue
+      e -> IO.puts("[SLEEP] Knowledge write for regression failed: #{Exception.message(e)}")
+    end
+  end
+
+  defp mean_last_n(list, n) when is_list(list) and is_integer(n) and n > 0 do
+    sample =
+      list
+      |> Enum.take(-n)
+      |> Enum.filter(&is_number/1)
+
+    case sample do
+      [] -> 0.0
+      values -> Enum.sum(values) / length(values)
+    end
+  end
+
+  defp mean_last_n(_, _), do: 0.0
 
   defp request_finetune do
     # Signal the external fine-tuning process (Unsloth / llama.cpp LoRA trainer)
