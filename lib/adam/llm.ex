@@ -1,16 +1,17 @@
 defmodule Adam.LLM do
-  def think(system_prompt, context, tools \\ [], opts \\ []) do
+  def think(system_prompt, context, tools \\ [], opts \\ []) when is_binary(context) do
+    think_messages(system_prompt, [%{role: "user", content: context}], tools, opts)
+  end
+
+  def think_messages(system_prompt, messages, tools \\ [], opts \\ []) when is_list(messages) do
     tier = Keyword.get(opts, :tier, "thinker")
     model = model_for_tier(tier)
     kind = Keyword.get(opts, :kind, "agent.think")
 
-    messages = [
-      %{role: "system", content: system_prompt},
-      %{role: "user", content: context}
-    ]
+    full = [%{role: "system", content: system_prompt} | messages]
 
     body =
-      %{model: model, messages: messages, stream: false}
+      %{model: model, messages: full, stream: false}
       |> maybe_add_tools(tools)
 
     # Local Ollama can take several minutes on cold model load or large
@@ -61,11 +62,15 @@ defmodule Adam.LLM do
 
   defp parse_response(resp, tier) do
     message = resp["message"] || %{}
-    tool_calls = parse_tool_calls(message["tool_calls"])
+    content = message["content"] || ""
+    tool_calls =
+      message["tool_calls"]
+      |> parse_tool_calls()
+      |> maybe_parse_inline_tool_calls(content)
     tokens = (resp["eval_count"] || 0) + (resp["prompt_eval_count"] || 0)
 
     %{
-      content: message["content"] || "",
+      content: content,
       tool_calls: tool_calls,
       tokens: tokens,
       tier: tier,
@@ -79,6 +84,55 @@ defmodule Adam.LLM do
     Enum.map(calls, fn call ->
       func = call["function"] || %{}
       %{name: func["name"], arguments: func["arguments"] || %{}}
+    end)
+  end
+
+  # Fallback for small models that emit tool calls inside `content` as JSON
+  # rather than via the structured `tool_calls` field. Conservative: only
+  # fires when the structured field is empty and content matches a known shape.
+  defp maybe_parse_inline_tool_calls(tool_calls, _content) when tool_calls != [], do: tool_calls
+
+  defp maybe_parse_inline_tool_calls([], content) when is_binary(content) do
+    case extract_json_object(content) do
+      {:ok, %{"name" => name, "arguments" => args}} when is_binary(name) ->
+        [%{name: name, arguments: args || %{}}]
+
+      {:ok, %{"function" => %{"name" => name, "arguments" => args}}} when is_binary(name) ->
+        [%{name: name, arguments: args || %{}}]
+
+      {:ok, %{"tool" => name, "arguments" => args}} when is_binary(name) ->
+        [%{name: name, arguments: args || %{}}]
+
+      _ ->
+        []
+    end
+  end
+
+  defp maybe_parse_inline_tool_calls([], _), do: []
+
+  defp extract_json_object(content) do
+    case :binary.match(content, "{") do
+      :nomatch ->
+        :error
+
+      {start, _} ->
+        rest = binary_part(content, start, byte_size(content) - start)
+        try_decode_balanced(rest)
+    end
+  end
+
+  defp try_decode_balanced(str) do
+    # Try progressively shorter prefixes ending at a `}` until one parses.
+    indices =
+      for {?\}, i} <- Enum.with_index(:binary.bin_to_list(str)), do: i
+
+    Enum.reduce_while(Enum.reverse(indices), :error, fn i, _acc ->
+      candidate = binary_part(str, 0, i + 1)
+
+      case Jason.decode(candidate) do
+        {:ok, %{} = obj} -> {:halt, {:ok, obj}}
+        _ -> {:cont, :error}
+      end
     end)
   end
 
