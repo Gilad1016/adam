@@ -18,7 +18,7 @@ RUN git clone --depth 1 https://github.com/erlang/rebar3.git /tmp/rebar3 && \
 
 WORKDIR /app
 
-COPY mix.exs mix.lock* ./
+COPY mix.exs mix.lock ./
 RUN mix deps.get && \
     rm -f deps/castore/lib/mix/tasks/certdata.ex && \
     mix deps.compile
