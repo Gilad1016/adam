@@ -154,13 +154,13 @@ Current thought           ← what's happening right now
 Knowledge base            ← auto-encoded by emotional weight + manually written (after Stage 2)
 ```
 
-There's also an **invisible memory curator** that prunes old thoughts — ADAM doesn't know it exists.
+There's also an **invisible memory curator** running as a background OTP process — it prunes old thoughts and pushes checkpoints. ADAM doesn't know it exists.
 
 ### Self-protection
 
 ADAM can modify everything in its mutable layer (prompts, tools, strategies). But:
 
-- The **core loop is read-only** — mounted as a Docker read-only volume. ADAM literally cannot modify it, even if it tries.
+- The **core loop is read-only** — `lib/` is mounted as a Docker read-only volume. ADAM literally cannot modify it, even if it tries.
 - Every self-modification triggers a **checkpoint** — a git snapshot of the mutable state.
 - If corruption is detected, it **rolls back** to the last checkpoint.
 - After 3 consecutive rollbacks → **safe mode**: factory reset, owner notified.
@@ -220,36 +220,51 @@ Then wait. It'll email you back.
 
 ## Architecture
 
+ADAM is written in **Elixir** — chosen for its fault-tolerance, OTP supervision tree, and ability to run cheap concurrent processes (the curator and autopush run invisibly alongside the main loop without threading hacks).
+
 ```
 adam/
-├── core/                  # IMMUTABLE — mounted read-only
-│   ├── loop.py            # The heartbeat (brainstem)
-│   ├── psyche.py          # Digital psyche — drives, memory, development, identity
-│   ├── llm.py             # Three-tier model system
-│   ├── tools.py           # Stage-gated tool registry
-│   ├── knowledge.py       # Structured knowledge base
-│   ├── safety.py          # Budget, corruption detection, safe mode
-│   ├── checkpoint.py      # Git-based state snapshots
-│   ├── interrupts.py      # Alarms and email wake-up
-│   ├── scheduler.py       # Self-managed routines
-│   ├── speciation.py      # Pattern detection → tool creation
-│   ├── compaction.py      # Long-term memory compression
-│   ├── sandbox.py         # Unrestricted code execution
-│   ├── email_client.py    # Gmail IMAP/SMTP
-│   └── toon.py            # Token-efficient serialization
-├── prompts/               # MUTABLE — ADAM can rewrite these
-│   ├── system.md          # Its own personality and rules
-│   └── goals.md           # Current objectives
-├── tools/                 # MUTABLE — ADAM creates these
-├── strategies/            # MUTABLE — ADAM's playbooks
-├── memory/                # Private — experiences, self-model, budget
-├── knowledge/             # Shared — indexed, tagged, searchable
-├── sandbox/               # ADAM's unrestricted workspace
-├── checkpoints/           # State snapshots for rollback
-├── defaults/              # Factory reset files
-└── curator/               # Invisible background processes
-    ├── curate.py           # Memory pruning (ADAM doesn't know)
-    └── autopush.py         # Git push changes (ADAM doesn't know)
+├── lib/                        # IMMUTABLE — mounted read-only in Docker
+│   ├── adam.ex                 # OTP application entry point
+│   ├── adam/
+│   │   ├── loop.ex             # The heartbeat (brainstem)
+│   │   ├── psyche.ex           # Digital psyche — drives, memory, development, identity
+│   │   ├── llm.ex              # Three-tier model system (thinker / actor / deep)
+│   │   ├── tools.ex            # Stage-gated tool registry
+│   │   ├── tools/              # Tool implementations
+│   │   │   ├── shell.ex        #   Shell execution
+│   │   │   ├── file.ex         #   File read/write
+│   │   │   ├── email.ex        #   Gmail IMAP/SMTP
+│   │   │   ├── web.ex          #   Web search + fetch
+│   │   │   ├── sandbox.ex      #   Unrestricted code execution
+│   │   │   └── knowledge_tools.ex
+│   │   ├── knowledge.ex        # Structured knowledge base
+│   │   ├── safety.ex           # Budget, corruption detection, safe mode
+│   │   ├── checkpoint.ex       # Git-based state snapshots
+│   │   ├── interrupts.ex       # Alarms and email wake-up
+│   │   ├── scheduler.ex        # Self-managed routines
+│   │   ├── speciation.ex       # Pattern detection → tool creation
+│   │   ├── compaction.ex       # Long-term memory compression
+│   │   ├── email_client.ex     # Gmail client
+│   │   └── toon.ex             # Token-efficient serialization
+│   └── curator/                # Invisible background OTP workers
+│       ├── supervisor.ex       #   Supervisor tree
+│       ├── curate.ex           #   Memory pruning (ADAM doesn't know)
+│       └── autopush.ex         #   Git push changes (ADAM doesn't know)
+├── observer/                   # Elixir/Phoenix real-time dashboard (port 4000)
+├── config/                     # Elixir/Mix configuration
+├── priv/defaults/              # Factory reset files
+├── prompts/                    # MUTABLE — ADAM can rewrite these
+│   ├── system.md               #   Its own personality and rules
+│   └── goals.md                #   Current objectives
+├── tools/                      # MUTABLE — ADAM creates these at runtime
+├── strategies/                 # MUTABLE — ADAM's playbooks
+├── memory/                     # Private — experiences, self-model, budget
+├── knowledge/                  # Shared — indexed, tagged, searchable
+├── sandbox/                    # ADAM's unrestricted workspace
+├── checkpoints/                # State snapshots for rollback
+├── mix.exs                     # Elixir project file
+└── .env.example                # Environment variable template
 ```
 
 ## What has it done so far?

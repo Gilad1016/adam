@@ -6,50 +6,50 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: all
               capabilities: [gpu]
     volumes:
       - ollama_data:/root/.ollama
     ports:
       - "11434:11434"
-    restart: unless-stopped
-
-  open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    depends_on:
-      - ollama
-    environment:
-      - OLLAMA_BASE_URL=http://ollama:11434
-    ports:
-      - "3000:8080"
-    volumes:
-      - open_webui_data:/app/backend/data
-    restart: unless-stopped
 
   adam:
     build: .
     depends_on:
       - ollama
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - ADAM_OBSERVER_MODE=${ADAM_OBSERVER_MODE:-partial}   # off | partial | full
+      - OBSERVER_EVENTS_FILE=/app/observer/events.jsonl
     env_file:
       - .env
-    environment:
-      - ADAM_OLLAMA_HOST=ollama:11434
-      - GIT_REMOTE_URL=https://github.com/Gilad1016/adam.git
     volumes:
-      - ./core:/app/core:ro
+      - ./lib:/app/lib:ro
       - ./prompts:/app/prompts
       - ./tools:/app/tools
       - ./strategies:/app/strategies
       - ./memory:/app/memory
       - ./knowledge:/app/knowledge
-      - ./checkpoints:/app/checkpoints
-      - ./defaults:/app/defaults:ro
-      - ./curator:/app/curator
-      - adam_sandbox:/app/sandbox
-      - ./.git:/app/.host-git:ro
-    restart: unless-stopped
+      - sandbox:/app/sandbox
+      - observer_data:/app/observer          # ADAM writes events here
+
+  observer:
+    build:
+      context: ./observer
+    depends_on:
+      - adam
+    environment:
+      - ADAM_OBSERVER_MODE=${ADAM_OBSERVER_MODE:-partial}
+      - OBSERVER_EVENTS_FILE=/app/observer/events.jsonl
+      - OBSERVER_MAX_EVENTS=1000
+      - OBSERVER_POLL_MS=500
+      - PORT=4000
+    ports:
+      - "4000:4000"                          # Dashboard at http://localhost:4000
+    volumes:
+      - observer_data:/app/observer:ro       # observer reads events (read-only)
 
 volumes:
   ollama_data:
-  open_webui_data:
-  adam_sandbox:
+  sandbox:
+  observer_data:                             # shared: adam writes, observer reads
