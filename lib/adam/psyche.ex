@@ -19,6 +19,13 @@ defmodule Adam.Psyche do
   # Tiredness: threshold by developmental stage to trigger deep consolidation
   @consolidation_thresholds %{0 => 0.4, 1 => 0.5, 2 => 0.6, 3 => 0.7, 4 => 0.8}
 
+  # Hard rate-limit: consolidation may fire at most once per N iterations even if tired.
+  @consolidation_min_iterations 20
+
+  # Content guard: skip the deep-model call if we have less than this many chars to
+  # consolidate. Prevents nearly-empty prompts from producing generic drivel.
+  @consolidation_min_chars 200
+
   # Maximum hourly budget spend used to normalise the budget_rate component
   @max_hourly_budget Application.compile_env(:adam, :max_hourly_budget, 5.0)
 
@@ -61,6 +68,8 @@ defmodule Adam.Psyche do
     |> Map.put_new("started_at", now)
     |> Map.put_new("tiredness_accumulator", 0.0)
     |> Map.put_new("last_consolidation_time", 0)
+    |> Map.put_new("last_consolidation_iteration", 0)
+    |> Map.put_new("iteration_count", 0)
   end
 
   def get_state do
@@ -140,6 +149,10 @@ defmodule Adam.Psyche do
   def process(thought, tool_results) do
     state = get_state()
     history_len = length(as_list(get_in_state(state, ["self_model", "action_history"])))
+
+    # Bump psyche-local iteration counter (one per Loop iteration, regardless of tools).
+    state = Map.put(state, "iteration_count", (state["iteration_count"] || 0) + 1)
+    save(state)
 
     Enum.each(tool_results, fn r ->
       track_action(r.name, r[:args] || %{}, to_string(r.result))
@@ -261,12 +274,21 @@ defmodule Adam.Psyche do
   end
 
   @doc """
-  Returns true when tiredness exceeds the threshold for the current stage.
+  Returns true when tiredness exceeds the threshold for the current stage AND
+  at least @consolidation_min_iterations have elapsed since the last consolidation.
+
+  The iteration gate is a hard rate limit: even at maximum tiredness we will not
+  consolidate more often than once every N iterations.
   """
   def should_consolidate? do
     stage = get_stage()
     threshold = @consolidation_thresholds[stage] || 0.8
-    compute_tiredness() >= threshold
+    state = get_state()
+    iter = state["iteration_count"] || 0
+    last_iter = state["last_consolidation_iteration"] || -999_999
+    iters_since = iter - last_iter
+
+    iters_since >= @consolidation_min_iterations and compute_tiredness() >= threshold
   end
 
   @doc """
@@ -284,45 +306,73 @@ defmodule Adam.Psyche do
     thought_summary =
       try do
         entries = Adam.Compaction.load_entries()
-        thoughts =
+        recent_thoughts =
           entries
           |> Enum.take(-40)
           |> Enum.map(fn e -> e["thought"] || "" end)
           |> Enum.reject(&(&1 == ""))
+
+        thoughts_text =
+          recent_thoughts
+          |> Enum.with_index(1)
+          |> Enum.map(fn {t, i} -> "(#{i}) #{t}" end)
           |> Enum.join("\n---\n")
           |> String.slice(0, 4000)
 
-        state = get_state()
-        stage_name = @stage_names[state["stage"] || 0]
-        vh = as_list(state["valence_history"])
-        recent = Enum.take(vh, -20)
-        avg_composite = if recent == [], do: 0.0,
-          else: Enum.reduce(recent, 0.0, fn e, a -> a + (if is_map(e), do: e["composite"] || 0, else: 0) end) / length(recent)
-
-        context = """
-        ## Recent Thoughts (last ~40 iterations)
-        #{thoughts}
-
-        ## Context
-        - Developmental stage: #{stage_name}
-        - Average valence (last 20): #{Float.round(avg_composite, 3)}
-        - Tiredness: #{Float.round(compute_tiredness(), 3)}
-        """
-
-        prompt = """
-        You are ADAM reflecting on your recent experiences during a deep consolidation pass.
-        Synthesise what you have learned into 3-7 concise, actionable insights.
-        Focus on: patterns you noticed, mistakes to avoid, effective strategies, open questions.
-        Format each insight as a bullet point starting with a verb (e.g. "Prefer X when Y").
-        """
-
-        result = Adam.LLM.think(prompt, context, [], kind: "infra.consolidate")
-
-        if String.starts_with?(result.content, "[LLM ERROR") do
-          IO.puts("[TIREDNESS] Deep model call failed: #{result.content}")
+        # Content guard: don't burn an LLM call on near-empty input.
+        if String.length(thoughts_text) < @consolidation_min_chars do
+          IO.puts("[TIREDNESS] Skipping deep synthesis: only #{String.length(thoughts_text)} chars of recent thoughts (< #{@consolidation_min_chars}).")
           nil
         else
-          result.content
+          state = get_state()
+          stage_name = @stage_names[state["stage"] || 0]
+          vh = as_list(state["valence_history"])
+          recent = Enum.take(vh, -20)
+          avg_composite = if recent == [], do: 0.0,
+            else: Enum.reduce(recent, 0.0, fn e, a -> a + (if is_map(e), do: e["composite"] || 0, else: 0) end) / length(recent)
+
+          context = """
+          ## Recent Thoughts (last #{length(recent_thoughts)}, verbatim)
+          #{thoughts_text}
+
+          ## Context
+          - Developmental stage: #{stage_name}
+          - Average valence (last 20): #{Float.round(avg_composite, 3)}
+          - Tiredness: #{Float.round(compute_tiredness(), 3)}
+          """
+
+          prompt = """
+          You are ADAM reflecting on the verbatim thoughts above during a deep consolidation pass.
+
+          Output 3-7 ONE-SENTENCE concrete learnings. Every learning MUST be grounded in
+          a specific thought above and reference what you actually did, what you observed,
+          and what that taught you.
+
+          Good examples:
+          - "Running ls in /app/config/ revealed the .exs files I expected — config layout is now clear."
+          - "Tried to read /app/tools.md but it didn't exist. Tools live in /app/tools/ as separate files."
+
+          Bad examples (FORBIDDEN — do NOT produce anything that looks like this):
+          - "Foster cross-functional collaboration through shared goals."
+          - "Prefer structured audits over ad-hoc checks."
+          - "Maintain flexibility and adapt to changing priorities."
+
+          Rules:
+          - Speak only about what you actually did and what you specifically learned from it.
+          - Each line must mention a concrete file path, command, tool name, observation, or value
+            that appears in the thoughts above.
+          - No generic management language. No abstractions divorced from the data above.
+          - One learning per line. No bullet markers, no preamble, no closing remarks.
+          """
+
+          result = Adam.LLM.think(prompt, context, [], kind: "infra.consolidate")
+
+          if String.starts_with?(result.content, "[LLM ERROR") do
+            IO.puts("[TIREDNESS] Deep model call failed: #{result.content}")
+            nil
+          else
+            result.content
+          end
         end
       rescue
         e ->
@@ -348,7 +398,10 @@ defmodule Adam.Psyche do
 
     try do
       state = get_state()
-      state = Map.put(state, "last_consolidation_time", System.os_time(:second))
+      state =
+        state
+        |> Map.put("last_consolidation_time", System.os_time(:second))
+        |> Map.put("last_consolidation_iteration", state["iteration_count"] || 0)
       save(state)
     rescue
       _ -> :ok
@@ -1083,6 +1136,8 @@ defmodule Adam.Psyche do
       "baseline_spent" => 0.0,
       "tiredness_accumulator" => 0.0,
       "last_consolidation_time" => 0,
+      "last_consolidation_iteration" => 0,
+      "iteration_count" => 0,
       "drives" => %{
         "energy" => 1.0,
         "curiosity" => 0.5,

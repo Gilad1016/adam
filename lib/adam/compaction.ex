@@ -1,17 +1,42 @@
 defmodule Adam.Compaction do
   @thought_log "/app/memory/thought_log.toon"
-  @max_entries 100
-  @compact_threshold 80
+  @compaction_state_file "/app/memory/compaction_state.toon"
+  @max_entries 200
+  # Compact when the log exceeds this many entries...
+  @compact_entry_threshold 100
+  # ...OR when the log file exceeds this many bytes on disk.
+  @compact_byte_threshold 50 * 1024
   # Dense pain cluster: compact early when this many consecutive recovering entries exist
   @pain_cluster_threshold 6
+  # Don't compact more than once every N entries added since the previous compaction
+  # (rate limit even when thresholds are exceeded — protects against thrash).
+  @min_entries_between_compactions 20
+  # Content guard: if the to-be-summarised body is shorter than this, skip the LLM call.
+  @summarize_min_chars 200
 
   def check do
     if File.exists?(@thought_log) do
       entries = load_entries()
       count = length(entries)
+      bytes =
+        case File.stat(@thought_log) do
+          {:ok, %{size: s}} -> s
+          _ -> 0
+        end
+
+      state = load_state()
+      last_count = state["last_compacted_count"] || 0
+      entries_since = count - last_count
 
       cond do
-        count > @compact_threshold ->
+        # Hard rate limit: don't run again until enough new entries accumulated.
+        entries_since < @min_entries_between_compactions ->
+          :ok
+
+        count > @compact_entry_threshold ->
+          compact(entries, :standard)
+
+        bytes > @compact_byte_threshold ->
           compact(entries, :standard)
 
         count > 0 and consecutive_recovering_tail(entries) >= @pain_cluster_threshold ->
@@ -61,6 +86,10 @@ defmodule Adam.Compaction do
     }
 
     save_entries([summary_entry | recent])
+    save_state(%{
+      "last_compacted_count" => length([summary_entry | recent]),
+      "last_compacted_at" => System.os_time(:second)
+    })
     IO.puts("[COMPACTION] #{mode} — compressed #{length(old)} entries into summary")
   end
 
@@ -93,8 +122,16 @@ defmodule Adam.Compaction do
 
     prompt = base_instruction <> anchor_text
 
-    result = Adam.LLM.think(prompt, context, [], kind: "infra.compact")
-    result.content
+    # Content guard: if there isn't enough material, skip the LLM call entirely
+    # and emit a trivial placeholder so callers still see the compaction took
+    # effect (entries got dropped) without burning tokens on empty input.
+    if String.length(context) < @summarize_min_chars do
+      IO.puts("[COMPACTION] Skipping LLM summarize: only #{String.length(context)} chars (< #{@summarize_min_chars}).")
+      "[skipped: insufficient content to summarize — #{length(thoughts)} short entries dropped]"
+    else
+      result = Adam.LLM.think(prompt, context, [], kind: "infra.compact")
+      result.content
+    end
   end
 
   def log_thought(iteration, thought, tool_results) do
@@ -150,5 +187,25 @@ defmodule Adam.Compaction do
 
   defp save_entries(entries) do
     File.write!(@thought_log, Adam.Toon.encode(entries))
+  end
+
+  defp load_state do
+    if File.exists?(@compaction_state_file) do
+      try do
+        case @compaction_state_file |> File.read!() |> Adam.Toon.decode() do
+          m when is_map(m) -> m
+          _ -> %{}
+        end
+      rescue
+        _ -> %{}
+      end
+    else
+      %{}
+    end
+  end
+
+  defp save_state(state) do
+    File.mkdir_p!(Path.dirname(@compaction_state_file))
+    File.write!(@compaction_state_file, Adam.Toon.encode(state))
   end
 end
