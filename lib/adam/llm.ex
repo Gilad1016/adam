@@ -12,7 +12,9 @@ defmodule Adam.LLM do
       %{model: model, messages: messages, stream: false}
       |> maybe_add_tools(tools)
 
-    case Req.post(ollama_url() <> "/api/chat", json: body, receive_timeout: 120_000) do
+    # Local Ollama can take several minutes on cold model load or large
+    # seed-prefixed contexts (consolidation, self-critique). Keep generous.
+    case Req.post(ollama_url() <> "/api/chat", json: body, receive_timeout: 600_000) do
       {:ok, %{status: 200, body: resp}} ->
         parse_response(resp, tier)
 
