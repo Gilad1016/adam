@@ -49,8 +49,8 @@ defmodule LlmGatewayWeb.CallsLive do
     {:noreply, assign(socket, :expanded, expanded)}
   end
 
-  def handle_event("filter_kind", %{"value" => value}, socket) do
-    filter = if value == "all", do: nil, else: value
+  def handle_event("filter_kind", %{"kind" => kind}, socket) do
+    filter = if kind == "all", do: nil, else: kind
 
     {:noreply,
      socket
@@ -94,21 +94,21 @@ defmodule LlmGatewayWeb.CallsLive do
       <div class="flex gap-2 mb-4 text-xs">
         <button
           phx-click="filter_kind"
-          phx-value-value="all"
+          phx-value-kind="all"
           class={"px-3 py-1 rounded border " <> filter_pill_class(@filter_kind, nil)}
         >
           all
         </button>
         <button
           phx-click="filter_kind"
-          phx-value-value="agent"
+          phx-value-kind="agent"
           class={"px-3 py-1 rounded border " <> filter_pill_class(@filter_kind, "agent")}
         >
           agent
         </button>
         <button
           phx-click="filter_kind"
-          phx-value-value="infra"
+          phx-value-kind="infra"
           class={"px-3 py-1 rounded border " <> filter_pill_class(@filter_kind, "infra")}
         >
           infra
