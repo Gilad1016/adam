@@ -22,4 +22,7 @@ prompts/goals.md
 adam_ex/_build/
 adam_ex/deps/
 adam_ex/.env
+_build/
+deps/
+*.beam
 erl_crash.dump

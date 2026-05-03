@@ -27,6 +27,7 @@ defmodule Adam.Tools do
   def execute("schedule_remove", args), do: Adam.Scheduler.remove_routine(args)
   def execute("schedule_list", _), do: Adam.Scheduler.list_routines()
   def execute("escalate", args), do: escalate(args)
+  def execute("set_anchor", args), do: Adam.Psyche.set_anchor(args)
   def execute(name, _), do: "[ERROR: unknown tool '#{name}']"
 
   def execute_tool_calls(tool_calls) do
@@ -93,7 +94,8 @@ defmodule Adam.Tools do
       %{name: "schedule_add", description: "Add a recurring routine", parameters: %{"type" => "object", "properties" => %{"name" => %{"type" => "string"}, "interval_minutes" => %{"type" => "integer"}, "action" => %{"type" => "string"}}, "required" => ["name", "interval_minutes", "action"]}},
       %{name: "schedule_remove", description: "Remove a routine", parameters: %{"type" => "object", "properties" => %{"name" => %{"type" => "string"}}, "required" => ["name"]}},
       %{name: "schedule_list", description: "List all routines", parameters: %{"type" => "object", "properties" => %{}}},
-      %{name: "escalate", description: "Send an urgent message to the owner", parameters: %{"type" => "object", "properties" => %{"reason" => %{"type" => "string"}, "details" => %{"type" => "string"}}, "required" => ["reason"]}}
+      %{name: "escalate", description: "Send an urgent message to the owner", parameters: %{"type" => "object", "properties" => %{"reason" => %{"type" => "string"}, "details" => %{"type" => "string"}}, "required" => ["reason"]}},
+      %{name: "set_anchor", description: "Pin a fact that must survive memory compaction", parameters: %{"type" => "object", "properties" => %{"key" => %{"type" => "string"}, "value" => %{"type" => "string"}}, "required" => ["key", "value"]}}
     ]
   end
 

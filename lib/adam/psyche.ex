@@ -91,6 +91,12 @@ defmodule Adam.Psyche do
     memories_text = recall_memories(context_for_recall, state)
     parts = if memories_text != "", do: parts ++ [memories_text], else: parts
 
+    rules_text = behavioral_rules_to_text(state)
+    parts = if rules_text != "", do: parts ++ [rules_text], else: parts
+
+    anchors_text = anchors_to_text(state)
+    parts = if anchors_text != "", do: parts ++ [anchors_text], else: parts
+
     context = Enum.join(parts, "\n\n")
     allowed_tools = get_available_tools()
 
@@ -124,10 +130,11 @@ defmodule Adam.Psyche do
     update_time_sense(new_len, tool_results)
     emit_maturity_signals()
 
-    # Tiredness-driven deep consolidation (replaces/augments fixed-interval compaction)
     if should_consolidate?() do
       consolidate()
     end
+
+    maybe_self_critique(new_len)
   end
 
   def process_owner_email(msg) do
@@ -237,7 +244,6 @@ defmodule Adam.Psyche do
   def consolidate do
     IO.puts("[TIREDNESS] Consolidation triggered (tiredness=#{Float.round(compute_tiredness(), 3)})")
 
-    # 1. Gather recent thought log for synthesis
     thought_summary =
       try do
         entries = Adam.Compaction.load_entries()
@@ -287,7 +293,6 @@ defmodule Adam.Psyche do
           nil
       end
 
-    # 2. Write insights to knowledge base (if we got any)
     if thought_summary != nil do
       try do
         now = DateTime.utc_now() |> Calendar.strftime("%Y-%m-%d %H:%M")
@@ -298,14 +303,12 @@ defmodule Adam.Psyche do
       end
     end
 
-    # 3. Run compaction regardless of deep pass success (force-compact, not threshold-gated)
     try do
       Adam.Compaction.compact()
     rescue
       e -> IO.puts("[TIREDNESS] Compaction error during consolidation: #{Exception.message(e)}")
     end
 
-    # 4. Reset consolidation timer
     try do
       state = get_state()
       state = Map.put(state, "last_consolidation_time", System.os_time(:second))
@@ -315,6 +318,46 @@ defmodule Adam.Psyche do
     end
 
     :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # TRAJECTORY CLASSIFIER
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Classify a thought's trajectory from valence + current drives.
+  Returns one of: "advancing", "recovering", "exploring", "idle".
+  No LLM — pure heuristics from psyche state.
+  """
+  def classify_trajectory(thought_content, tool_results, valence) do
+    state = get_state()
+    drives = state["drives"] || %{}
+    mastery = drives["mastery"] || 0.3
+
+    has_tools = tool_results != []
+    thought_len = thought_content |> String.trim() |> String.length()
+
+    cond do
+      not has_tools and thought_len < 100 ->
+        "idle"
+
+      true ->
+        pain        = valence["pain"] || 0.0
+        satisfaction = valence["satisfaction"] || 0.0
+        novelty     = valence["novelty"] || 0.0
+        surprise    = valence["surprise"] || 0.0
+        relevance   = valence["relevance"] || 0.0
+
+        dims = [{"pain", pain}, {"satisfaction", satisfaction},
+                {"novelty", novelty}, {"surprise", surprise}]
+        {dominant, _} = Enum.max_by(dims, fn {_, v} -> v end)
+
+        cond do
+          dominant == "pain" and mastery > 0.3 -> "recovering"
+          dominant == "satisfaction" and relevance > novelty -> "advancing"
+          true -> "exploring"
+        end
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -361,6 +404,10 @@ defmodule Adam.Psyche do
             is_failure = Enum.any?(@pain_keywords, &String.contains?(result_lower, &1))
             if is_failure, do: clamp(m + 0.03), else: clamp(m - 0.02)
           end)
+
+        # Consecutive recovering tags accelerate mastery beyond per-failure increment
+        consec = count_consecutive_recovering()
+        mastery = if consec >= 2, do: clamp(mastery + 0.02 * (consec - 1)), else: mastery
 
         drives
         |> Map.put("curiosity", curiosity)
@@ -877,6 +924,16 @@ defmodule Adam.Psyche do
       lines = lines ++ ["Tool diversity: #{total_tools} distinct tools across #{total_calls} calls (#{trunc(diversity * 100)}% spread)."]
       lines = if retries + pivots > 0, do: lines ++ ["When you fail, you retry #{retries}x and pivot #{pivots}x."], else: lines
 
+      # Trajectory distribution from last 50 thought log entries
+      traj_counts = count_trajectory_tags(50)
+      total_tagged = max(Enum.sum(Map.values(traj_counts)), 1)
+      traj_pct = Map.new(traj_counts, fn {k, v} -> {k, trunc(v / total_tagged * 100)} end)
+      lines = lines ++ [
+        "Last #{total_tagged} thoughts: " <>
+        "#{traj_pct["advancing"]}% advancing, #{traj_pct["recovering"]}% recovering, " <>
+        "#{traj_pct["exploring"]}% exploring, #{traj_pct["idle"]}% idle."
+      ]
+
       sm = Map.merge(sm, %{"summary" => Enum.join(lines, " "), "last_rebuilt" => System.os_time(:second)})
       state = Map.put(state, "self_model", sm)
       save(state)
@@ -925,6 +982,184 @@ defmodule Adam.Psyche do
   end
 
   # ---------------------------------------------------------------------------
+  # THOUGHT LOG HELPERS (read-only — compaction.ex owns writes)
+  # ---------------------------------------------------------------------------
+
+  @thought_log "/app/memory/thought_log.toon"
+
+  defp count_trajectory_tags(n) do
+    base = %{"advancing" => 0, "recovering" => 0, "exploring" => 0, "idle" => 0}
+
+    if File.exists?(@thought_log) do
+      entries =
+        try do
+          @thought_log |> File.read!() |> Adam.Toon.decode() |> as_list() |> Enum.take(-n)
+        rescue
+          _ -> []
+        end
+
+      Enum.reduce(entries, base, fn e, acc ->
+        tag = e["tag"]
+        if tag && Map.has_key?(acc, tag), do: Map.update!(acc, tag, &(&1 + 1)), else: acc
+      end)
+    else
+      base
+    end
+  end
+
+  defp count_consecutive_recovering do
+    if File.exists?(@thought_log) do
+      entries =
+        try do
+          @thought_log |> File.read!() |> Adam.Toon.decode() |> as_list() |> Enum.take(-6)
+        rescue
+          _ -> []
+        end
+
+      entries
+      |> Enum.reverse()
+      |> Enum.reduce_while(0, fn e, count ->
+        if e["tag"] == "recovering", do: {:cont, count + 1}, else: {:halt, count}
+      end)
+    else
+      0
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # COMPACTION ANCHORS — facts that survive memory compression
+  # ---------------------------------------------------------------------------
+
+  def set_anchor(args) when is_map(args) do
+    key = args["key"] || args[:key]
+    value = args["value"] || args[:value]
+    if is_binary(key) and is_binary(value) do
+      state = get_state()
+      anchors = state["anchors"] || %{}
+      anchors = Map.put(anchors, key, %{"value" => value, "set_at" => System.os_time(:second)})
+      state = Map.put(state, "anchors", anchors)
+      save(state)
+      "anchor set: #{key}"
+    else
+      "[ERROR: set_anchor requires 'key' and 'value']"
+    end
+  end
+
+  def get_anchors do
+    state = get_state()
+    state["anchors"] || %{}
+  end
+
+  defp anchors_to_text(state) do
+    anchors = state["anchors"] || %{}
+    if map_size(anchors) == 0 do
+      ""
+    else
+      lines = ["== ANCHORS (invariants — never drop these) =="]
+      lines = lines ++ Enum.map(anchors, fn {k, v} -> "- #{k}: #{v["value"]}" end)
+      lines = lines ++ ["== END ANCHORS =="]
+      Enum.join(lines, "\n")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # SELF-CRITIQUE — behavioral rules generated from failure streaks
+  # ---------------------------------------------------------------------------
+
+  defp maybe_self_critique(iteration) do
+    if should_trigger_critique?(iteration) do
+      entries = gather_struggle_context()
+      generate_critique(entries, iteration)
+    end
+  end
+
+  defp should_trigger_critique?(iteration) do
+    state = get_state()
+    last = state["last_critique_iteration"] || -999
+    if iteration - last < 20 do
+      false
+    else
+      counts = count_trajectory_tags(20)
+      total = max(Enum.sum(Map.values(counts)), 1)
+      recovering_pct = (counts["recovering"] || 0) / total
+      recovering_pct > 0.3
+    end
+  end
+
+  defp gather_struggle_context do
+    if File.exists?(@thought_log) do
+      try do
+        @thought_log
+        |> File.read!()
+        |> Adam.Toon.decode()
+        |> as_list()
+        |> Enum.take(-30)
+        |> Enum.filter(&(&1["tag"] == "recovering"))
+        |> Enum.take(10)
+      rescue
+        _ -> []
+      end
+    else
+      []
+    end
+  end
+
+  defp generate_critique(entries, iteration) do
+    if entries == [] do
+      :ok
+    else
+      thoughts =
+        entries
+        |> Enum.map(&(&1["thought"] || ""))
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.join("\n---\n")
+        |> String.slice(0, 2000)
+
+      prompt = """
+      Review these thoughts from ADAM's struggle episodes. Generate 1-3 behavioral rules (max 15 words each) to prevent similar failures.
+      Format: one rule per line, starting with a verb. Example: "Verify file exists before reading."
+      """
+
+      try do
+        result = Adam.LLM.think(prompt, thoughts, [], tier: "thinker")
+
+        rules =
+          result.content
+          |> String.split("\n")
+          |> Enum.map(&String.trim/1)
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.take(3)
+
+        state = get_state()
+        existing = as_list(state["behavioral_rules"])
+        all_rules = Enum.take(existing ++ rules, -10)
+
+        state =
+          state
+          |> Map.put("behavioral_rules", all_rules)
+          |> Map.put("last_critique_iteration", iteration)
+
+        save(state)
+        IO.puts("[PSYCHE] Self-critique: #{length(rules)} rules generated")
+      rescue
+        _ -> :ok
+      end
+    end
+  end
+
+  defp behavioral_rules_to_text(state) do
+    rules = as_list(state["behavioral_rules"])
+    if rules == [] do
+      ""
+    else
+      lines = ["== BEHAVIORAL RULES (learned from failures) =="]
+      lines = lines ++ Enum.map(rules, &("- #{&1}"))
+      lines = lines ++ ["== END BEHAVIORAL RULES =="]
+      Enum.join(lines, "\n")
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # HELPERS
   # ---------------------------------------------------------------------------
 
@@ -957,7 +1192,10 @@ defmodule Adam.Psyche do
         "owner_summary" => "",
         "last_rebuilt" => 0
       },
-      "valence_history" => []
+      "valence_history" => [],
+      "behavioral_rules" => [],
+      "last_critique_iteration" => -999,
+      "anchors" => %{}
     }
   end
 

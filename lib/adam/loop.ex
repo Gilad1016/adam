@@ -51,15 +51,6 @@ defmodule Adam.Loop do
 
     routines = Adam.Scheduler.check_routines()
 
-    if rem(iteration, 20) == 0 do
-      # Compaction rewrites thought_log.toon in place (collapses old entries
-      # into a single summary entry). Watch that file's size for changes.
-      log_path = "/app/memory/thought_log.toon"
-      before_size = if File.exists?(log_path), do: File.stat!(log_path).size, else: 0
-      Adam.Compaction.check()
-      after_size = if File.exists?(log_path), do: File.stat!(log_path).size, else: 0
-      if after_size != before_size, do: Adam.Observer.memory_compact(before_size, after_size, iteration)
-    end
     if rem(iteration, 30) == 0, do: Adam.Speciation.check()
 
     psyche_state = Adam.Psyche.prepare(iteration)
@@ -99,6 +90,14 @@ defmodule Adam.Loop do
     Adam.Compaction.log_thought(iteration, thought.content, tool_results)
     new_size = if File.exists?(exp_path), do: File.stat!(exp_path).size, else: 0
     Adam.Observer.memory_update(exp_path, old_size, new_size, iteration)
+
+    Adam.Retrospective.check()
+
+    log_path = exp_path
+    before_size = new_size
+    Adam.Compaction.check()
+    after_size = if File.exists?(log_path), do: File.stat!(log_path).size, else: 0
+    if after_size != before_size, do: Adam.Observer.memory_compact(before_size, after_size, iteration)
 
     balance = Adam.Safety.deduct_electricity(thought.cost)
     IO.puts("[BUDGET] $#{Float.round(balance, 2)} remaining (#{thought.tier})")
