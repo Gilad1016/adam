@@ -14,6 +14,9 @@ memory/speciation.json
 memory/alarms.json
 prompts/goals.md
 
+# Worktrees
+.worktrees/
+
 # Elixir
 adam_ex/_build/
 adam_ex/deps/
