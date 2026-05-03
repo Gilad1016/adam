@@ -15,6 +15,10 @@ defmodule LlmGatewayWeb.StatsLive do
     {:noreply, refresh(socket)}
   end
 
+  def handle_info(:calls_wiped, socket) do
+    {:noreply, refresh(socket)}
+  end
+
   defp refresh(socket) do
     socket
     |> assign(:summary, summary())

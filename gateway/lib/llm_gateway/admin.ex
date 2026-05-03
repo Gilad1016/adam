@@ -68,6 +68,12 @@ defmodule LlmGateway.Admin do
   def wipe_knowledge, do: wipe_dir(knowledge_dir())
   def wipe_checkpoints, do: wipe_dir(checkpoints_dir())
 
+  def wipe_calls do
+    LlmGateway.Repo.delete_all(LlmGateway.Calls)
+    Phoenix.PubSub.broadcast(LlmGateway.PubSub, "calls", :calls_wiped)
+    :ok
+  end
+
   def wipe_dir(dir) when is_binary(dir) do
     abs = ensure_safe!(dir)
 
@@ -92,6 +98,7 @@ defmodule LlmGateway.Admin do
     wipe_memory()
     wipe_knowledge()
     wipe_checkpoints()
+    wipe_calls()
     restore_defaults()
     :ok
   end

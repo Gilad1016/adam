@@ -59,6 +59,11 @@ defmodule LlmGatewayWeb.AdminLive do
   end
 
   @impl true
+  def handle_event("wipe_calls", %{"confirm" => "DELETE"}, socket) do
+    {:noreply, run_wipe(socket, &Admin.wipe_calls/0, "calls history")}
+  end
+
+  @impl true
   def handle_event("factory_reset", %{"confirm" => "RESET"}, socket) do
     try do
       Admin.factory_reset()
@@ -70,7 +75,7 @@ defmodule LlmGatewayWeb.AdminLive do
 
   @impl true
   def handle_event(event, _params, socket)
-      when event in ["wipe_memory", "wipe_knowledge", "wipe_checkpoints", "factory_reset"] do
+      when event in ["wipe_memory", "wipe_knowledge", "wipe_checkpoints", "wipe_calls", "factory_reset"] do
     {:noreply, flash_err(socket, "confirmation phrase did not match — nothing was deleted")}
   end
 
@@ -211,6 +216,19 @@ defmodule LlmGatewayWeb.AdminLive do
           </button>
         </form>
 
+        <form phx-submit="wipe_calls" class="border border-gray-800 rounded p-3 grid grid-cols-12 gap-2 items-center">
+          <span class="col-span-3 text-gray-200 text-sm">wipe calls history</span>
+          <input
+            type="text"
+            name="confirm"
+            placeholder="type DELETE"
+            class="col-span-7 bg-gray-950 border border-gray-800 rounded px-2 py-1 text-sm text-gray-200 font-mono"
+          />
+          <button type="submit" class="col-span-2 bg-red-800 hover:bg-red-700 text-white text-xs px-3 py-1 rounded">
+            wipe
+          </button>
+        </form>
+
         <form phx-submit="factory_reset" class="border border-red-900 rounded p-3 grid grid-cols-12 gap-2 items-center bg-red-950/20">
           <span class="col-span-3 text-red-300 text-sm">factory reset</span>
           <input
@@ -224,7 +242,7 @@ defmodule LlmGatewayWeb.AdminLive do
           </button>
         </form>
         <p class="text-xs text-gray-500 mt-2">
-          factory reset wipes memory/, knowledge/, checkpoints/ and restores prompts from <code>priv/defaults/</code> if present. Restart ADAM afterward.
+          factory reset wipes memory/, knowledge/, checkpoints/, the gateway's calls history, and restores prompts from <code>priv/defaults/prompts/</code> if present. Restart ADAM afterward.
         </p>
       </div>
     </div>
