@@ -469,6 +469,7 @@ defmodule Adam.Psyche do
   defp update_drives(_thought, tool_results) do
     state = get_state()
     drives = state["drives"] || %{}
+    weights = Adam.Tuning.get(:drive_weights)
 
     drives = Map.put(drives, "energy", compute_energy())
 
@@ -482,9 +483,9 @@ defmodule Adam.Psyche do
         curiosity =
           Enum.reduce(used_tools, curiosity, fn tool, cur ->
             if not MapSet.member?(history_tools, tool) do
-              clamp(cur - 0.05)
+              clamp(cur - weights[:curiosity_unfamiliar_drop])
             else
-              clamp(cur + 0.01)
+              clamp(cur + weights[:curiosity_familiar_gain])
             end
           end)
 
@@ -493,18 +494,18 @@ defmodule Adam.Psyche do
           Enum.reduce(tool_results, mastery, fn r, m ->
             result_lower = String.downcase(to_string(r.result))
             is_failure = Enum.any?(@pain_keywords, &String.contains?(result_lower, &1))
-            if is_failure, do: clamp(m + 0.03), else: clamp(m - 0.02)
+            if is_failure, do: clamp(m + weights[:mastery_failure_gain]), else: clamp(m - weights[:mastery_success_decay])
           end)
 
         # Consecutive recovering tags accelerate mastery beyond per-failure increment
         consec = count_consecutive_recovering()
-        mastery = if consec >= 2, do: clamp(mastery + 0.02 * (consec - 1)), else: mastery
+        mastery = if consec >= 2, do: clamp(mastery + weights[:mastery_recovering_streak_gain] * (consec - 1)), else: mastery
 
         drives
         |> Map.put("curiosity", curiosity)
         |> Map.put("mastery", mastery)
       else
-        curiosity = clamp((drives["curiosity"] || 0.5) + 0.02)
+        curiosity = clamp((drives["curiosity"] || 0.5) + weights[:curiosity_idle_gain])
         Map.put(drives, "curiosity", curiosity)
       end
 
@@ -515,9 +516,9 @@ defmodule Adam.Psyche do
 
     social =
       if now - last_sent < 3600 do
-        clamp(social * 0.3, 0.0, 0.3)
+        clamp(social * weights[:social_recent_email_decay], 0.0, 0.3)
       else
-        clamp(social + 0.005)
+        clamp(social + weights[:social_isolation_gain])
       end
 
     drives = Map.put(drives, "social", social)
