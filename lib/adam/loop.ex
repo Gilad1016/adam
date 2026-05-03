@@ -97,15 +97,12 @@ defmodule Adam.Loop do
 
     IO.puts("[THOUGHT] #{String.slice(thought.content, 0, 200)}")
 
-    messages =
-      messages ++
-        [
-          %{
-            role: "assistant",
-            content: thought.content,
-            tool_calls: format_tool_calls_for_message(thought.tool_calls)
-          }
-        ]
+    # Build the assistant turn. Include `tool_calls` ONLY when non-empty —
+    # sending an empty array on assistant messages is rejected (or worse,
+    # crashes some Ollama tool-loop paths) and was the cause of the loop
+    # restarting on every iteration after PR #20 introduced rolling history.
+    assistant_msg = build_assistant_message(thought)
+    messages = messages ++ [assistant_msg]
 
     {tool_results, messages} =
       if thought.tool_calls != [] do
@@ -138,7 +135,17 @@ defmodule Adam.Loop do
     %{state | messages: trim_history(messages)}
   end
 
-  defp format_tool_calls_for_message([]), do: []
+  defp build_assistant_message(%{tool_calls: []} = thought) do
+    %{role: "assistant", content: thought.content}
+  end
+
+  defp build_assistant_message(%{tool_calls: calls} = thought) do
+    %{
+      role: "assistant",
+      content: thought.content,
+      tool_calls: format_tool_calls_for_message(calls)
+    }
+  end
 
   defp format_tool_calls_for_message(calls) do
     Enum.map(calls, fn %{name: name, arguments: args} ->
@@ -155,6 +162,8 @@ defmodule Adam.Loop do
   # Keep at most @history_user_turns most-recent user turns, with the
   # assistant + tool messages that follow each. We walk forward, find the
   # cutoff index of the Nth-from-last user message, and drop everything before.
+  defp trim_history([]), do: []
+
   defp trim_history(messages) do
     user_indices =
       messages

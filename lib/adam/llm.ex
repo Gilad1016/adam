@@ -95,13 +95,13 @@ defmodule Adam.LLM do
   defp maybe_parse_inline_tool_calls([], content) when is_binary(content) do
     case extract_json_object(content) do
       {:ok, %{"name" => name, "arguments" => args}} when is_binary(name) ->
-        [%{name: name, arguments: args || %{}}]
+        [%{name: name, arguments: normalize_args(args)}]
 
       {:ok, %{"function" => %{"name" => name, "arguments" => args}}} when is_binary(name) ->
-        [%{name: name, arguments: args || %{}}]
+        [%{name: name, arguments: normalize_args(args)}]
 
       {:ok, %{"tool" => name, "arguments" => args}} when is_binary(name) ->
-        [%{name: name, arguments: args || %{}}]
+        [%{name: name, arguments: normalize_args(args)}]
 
       _ ->
         []
@@ -110,14 +110,33 @@ defmodule Adam.LLM do
 
   defp maybe_parse_inline_tool_calls([], _), do: []
 
-  defp extract_json_object(content) do
-    case :binary.match(content, "{") do
-      :nomatch ->
-        :error
+  # Tools expect args as a map with string keys. Normalize defensively so the
+  # inline path never hands a string/list/nil to `Adam.Tools.execute/2`, which
+  # would propagate through the loop and could crash downstream pattern matches.
+  defp normalize_args(nil), do: %{}
+  defp normalize_args(args) when is_map(args), do: args
 
-      {start, _} ->
-        rest = binary_part(content, start, byte_size(content) - start)
-        try_decode_balanced(rest)
+  defp normalize_args(args) when is_binary(args) do
+    case Jason.decode(args) do
+      {:ok, %{} = m} -> m
+      _ -> %{"raw" => args}
+    end
+  end
+
+  defp normalize_args(_), do: %{}
+
+  defp extract_json_object(content) do
+    try do
+      case :binary.match(content, "{") do
+        :nomatch ->
+          :error
+
+        {start, _} ->
+          rest = binary_part(content, start, byte_size(content) - start)
+          try_decode_balanced(rest)
+      end
+    rescue
+      _ -> :error
     end
   end
 
