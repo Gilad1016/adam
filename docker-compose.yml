@@ -26,15 +26,21 @@ services:
       - OLLAMA_NUM_PARALLEL=4
       # Faster attention kernel on Ampere+ GPUs.
       - OLLAMA_FLASH_ATTENTION=1
+      # Best-effort: silence Gin per-request access logs on Ollama versions
+      # that respect this. Undocumented; harmless if ignored. The healthcheck
+      # interval below is what actually dominates the noise reduction.
+      - OLLAMA_LOG_LEVEL=warn
     volumes:
       - ollama_data:/root/.ollama
     ports:
       - "11434:11434"
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
-      interval: 5s
+      # 30s reduces the GET /api/tags log spam from 12/min to 2/min while still
+      # giving Docker enough signal to fail fast (retries=6 → ~3min worst case).
+      interval: 30s
       timeout: 5s
-      retries: 18
+      retries: 6
       start_period: 60s
 
   gateway:
@@ -44,14 +50,27 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
+    # GPU access for nvidia-smi (utility cap only — no compute reservation,
+    # so Ollama keeps the full device for inference).
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [utility]
     environment:
       - OLLAMA_URL=http://ollama:11434
       - DATABASE_PATH=/app/data/calls.db
       - PORT=4000
+      - HOST_PROC=/host/proc
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=utility
     ports:
       - "4000:4000"                          # Dashboard at http://localhost:4000
     volumes:
       - gateway_data:/app/data
+      - /proc:/host/proc:ro                  # Host /proc for CPU/memory metrics
       - ./.env:/app/host/.env
       - ./prompts:/app/host/prompts
       - ./memory:/app/host/memory
