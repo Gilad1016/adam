@@ -2,16 +2,10 @@
 __pycache__/
 *.pyc
 checkpoints/
-memory/experiences.toon
-memory/self_model.toon
-memory/budget.toon
-memory/goals.toon
+memory/
 knowledge/*.toon
 curator/curator.log
 sandbox/
-memory/schedule.json
-memory/speciation.json
-memory/alarms.json
 # Worktrees
 .worktrees/
 .claude/
