@@ -1,18 +1,21 @@
 defmodule Adam.Compaction do
   @thought_log "/app/memory/thought_log.toon"
   @compaction_state_file "/app/memory/compaction_state.toon"
-  @max_entries 200
-  # Compact when the log exceeds this many entries...
-  @compact_entry_threshold 100
-  # ...OR when the log file exceeds this many bytes on disk.
-  @compact_byte_threshold 50 * 1024
+  # Per-stage hard cap on entries kept in the thought log.
+  @max_entries_per_stage %{0 => 100, 1 => 150, 2 => 200, 3 => 300, 4 => 500}
+  # Per-stage entry-count trigger for compaction.
+  @compact_entry_threshold_per_stage %{0 => 50, 1 => 80, 2 => 120, 3 => 180, 4 => 250}
+  # Per-stage byte-size trigger for compaction (file size on disk).
+  @compact_byte_threshold_per_stage %{
+    0 => 25_000, 1 => 40_000, 2 => 60_000, 3 => 80_000, 4 => 120_000
+  }
   # Dense pain cluster: compact early when this many consecutive recovering entries exist
   @pain_cluster_threshold 6
   # Don't compact more than once every N entries added since the previous compaction
   # (rate limit even when thresholds are exceeded — protects against thrash).
   @min_entries_between_compactions 20
   # Content guard: if the to-be-summarised body is shorter than this, skip the LLM call.
-  # Tunable via Adam.Tuning.get(:summarize_min_chars).
+  @summarize_min_chars 200
 
   def check do
     if File.exists?(@thought_log) do
@@ -33,10 +36,10 @@ defmodule Adam.Compaction do
         entries_since < @min_entries_between_compactions ->
           :ok
 
-        count > @compact_entry_threshold ->
+        count > compact_entry_threshold() ->
           compact(entries, :standard)
 
-        bytes > @compact_byte_threshold ->
+        bytes > compact_byte_threshold() ->
           compact(entries, :standard)
 
         count > 0 and consecutive_recovering_tail(entries) >= @pain_cluster_threshold ->
@@ -125,9 +128,8 @@ defmodule Adam.Compaction do
     # Content guard: if there isn't enough material, skip the LLM call entirely
     # and emit a trivial placeholder so callers still see the compaction took
     # effect (entries got dropped) without burning tokens on empty input.
-    min_chars = Adam.Tuning.get(:summarize_min_chars)
-    if String.length(context) < min_chars do
-      IO.puts("[COMPACTION] Skipping LLM summarize: only #{String.length(context)} chars (< #{min_chars}).")
+    if String.length(context) < @summarize_min_chars do
+      IO.puts("[COMPACTION] Skipping LLM summarize: only #{String.length(context)} chars (< #{@summarize_min_chars}).")
       "[skipped: insufficient content to summarize — #{length(thoughts)} short entries dropped]"
     else
       result = Adam.LLM.think(prompt, context, [], kind: "infra.compact")
@@ -160,9 +162,11 @@ defmodule Adam.Compaction do
     entries = load_entries()
     entries = entries ++ [entry]
 
+    cap = max_entries()
+
     entries =
-      if length(entries) > @max_entries do
-        Enum.take(entries, -@max_entries)
+      if length(entries) > cap do
+        Enum.take(entries, -cap)
       else
         entries
       end
@@ -208,5 +212,29 @@ defmodule Adam.Compaction do
   defp save_state(state) do
     File.mkdir_p!(Path.dirname(@compaction_state_file))
     File.write!(@compaction_state_file, Adam.Toon.encode(state))
+  end
+
+  defp max_entries do
+    try do
+      Map.get(@max_entries_per_stage, Adam.Psyche.get_stage(), 200)
+    rescue
+      _ -> 200
+    end
+  end
+
+  defp compact_entry_threshold do
+    try do
+      Map.get(@compact_entry_threshold_per_stage, Adam.Psyche.get_stage(), 100)
+    rescue
+      _ -> 100
+    end
+  end
+
+  defp compact_byte_threshold do
+    try do
+      Map.get(@compact_byte_threshold_per_stage, Adam.Psyche.get_stage(), 50_000)
+    rescue
+      _ -> 50_000
+    end
   end
 end
