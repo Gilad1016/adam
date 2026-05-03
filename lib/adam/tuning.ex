@@ -4,9 +4,14 @@ defmodule Adam.Tuning do
 
   Each knob has:
     - default: baked-in safe value
-    - min, max: hard bounds; out-of-range writes rejected
+    - min, max: hard bounds; out-of-range writes rejected (scalar knobs)
+    - validator: optional 1-arity fun replacing min/max for non-scalar values
     - stability_hours: minimum interval between successive `tune/3` calls
       for the same knob (operator `set/3` bypasses)
+
+  A knob is either *scalar* (numeric, gated by `min`/`max`) or *validated*
+  (any shape, gated by `validator.(value) == true`). Specs MUST have one
+  of those two forms — never both.
 
   Storage:
     - /app/memory/tuning.toon         current overrides (knob_name => value)
@@ -14,6 +19,22 @@ defmodule Adam.Tuning do
 
   Read path: Adam.Tuning.get(:knob_name) returns override-or-default.
   """
+
+  # Canonical personality vector — the per-iteration deltas applied to each
+  # drive. Pulled directly from the previous hardcoded values in psyche.ex.
+  # Names describe the EFFECT, not the math. Keys are fixed; the validator
+  # rejects maps with missing or extra keys so the personality vector keeps
+  # a stable shape across overrides.
+  @default_drive_weights %{
+    curiosity_unfamiliar_drop: 0.05,
+    curiosity_familiar_gain: 0.01,
+    curiosity_idle_gain: 0.02,
+    mastery_failure_gain: 0.03,
+    mastery_success_decay: 0.02,
+    mastery_recovering_streak_gain: 0.02,
+    social_recent_email_decay: 0.3,
+    social_isolation_gain: 0.005
+  }
 
   @knobs %{
     sleep_threshold: %{
@@ -39,6 +60,12 @@ defmodule Adam.Tuning do
     sleep_valence_sample_size: %{
       default: 20, min: 5, max: 200, stability_hours: 24,
       desc: "How many recent valence samples to mean for sleep pre/post comparison."
+    },
+    drive_weights: %{
+      default: @default_drive_weights,
+      validator: &__MODULE__.valid_drive_weights?/1,
+      stability_hours: 12,
+      desc: "Personality vector: per-drive deltas applied each iteration."
     }
   }
 
@@ -47,6 +74,23 @@ defmodule Adam.Tuning do
   @registry_file "/app/memory/tuning_knobs.toon"
 
   def knobs, do: @knobs
+
+  @doc "The canonical default personality vector. Useful for tests and resets."
+  def default_drive_weights, do: @default_drive_weights
+
+  @doc """
+  Validator for the :drive_weights knob.
+
+  A drive-weight map is valid iff:
+    - it's a map
+    - its keys exactly match @default_drive_weights (no missing, no extras)
+    - every value is a number in [-1.0, 1.0]
+  """
+  def valid_drive_weights?(value) do
+    is_map(value) and
+      Map.keys(value) |> Enum.sort() == Map.keys(@default_drive_weights) |> Enum.sort() and
+      Enum.all?(value, fn {_k, v} -> is_number(v) and v >= -1.0 and v <= 1.0 end)
+  end
 
   @doc """
   Dump the knob registry to disk so external services (e.g. the gateway admin
@@ -111,8 +155,8 @@ defmodule Adam.Tuning do
       is_nil(spec) ->
         {:error, :unknown_knob}
 
-      not within_bounds?(value, spec) ->
-        {:error, {:out_of_bounds, spec.min, spec.max}}
+      not value_ok?(value, spec) ->
+        {:error, bounds_error(spec)}
 
       time_since_last_change(name) < spec.stability_hours * 3600 ->
         {:error, :stability_lock}
@@ -154,8 +198,8 @@ defmodule Adam.Tuning do
       is_nil(spec) ->
         {:error, :unknown_knob}
 
-      not within_bounds?(value, spec) ->
-        {:error, {:out_of_bounds, spec.min, spec.max}}
+      not value_ok?(value, spec) ->
+        {:error, bounds_error(spec)}
 
       true ->
         previous = get(name)
@@ -173,9 +217,14 @@ defmodule Adam.Tuning do
     end
   end
 
-  defp within_bounds?(v, %{min: lo, max: hi}) when is_number(v),
-    do: v >= lo and v <= hi
-  defp within_bounds?(_, _), do: false
+  # Validated knobs (custom validator) take precedence over scalar bounds.
+  defp value_ok?(value, %{validator: f}) when is_function(f, 1), do: f.(value) == true
+  defp value_ok?(v, %{min: lo, max: hi}) when is_number(v), do: v >= lo and v <= hi
+  defp value_ok?(_, _), do: false
+
+  defp bounds_error(%{validator: _}), do: :invalid_value
+  defp bounds_error(%{min: lo, max: hi}), do: {:out_of_bounds, lo, hi}
+  defp bounds_error(_), do: :invalid_value
 
   defp time_since_last_change(name) do
     last =
