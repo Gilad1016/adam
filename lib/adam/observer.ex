@@ -88,10 +88,67 @@ defmodule Adam.Observer do
         context: context,
         context_len: byte_size(context),
         allowed_tools: if(allowed_tools, do: MapSet.to_list(allowed_tools), else: []),
-        tier: tier
+        tier: tier,
+        sections: [%{"label" => "system_prompt", "content" => system_prompt} | parse_context_sections(context)]
       }, iteration)
     end
   end
+
+  defp parse_context_sections(context) do
+    lines = String.split(context, "\n")
+
+    {sections, current_label, current_lines, pre_lines} =
+      Enum.reduce(lines, {[], nil, [], []}, fn line, {sections, label, acc, pre} ->
+        cond do
+          label == nil and Regex.match?(~r/^== .+ ==$/, String.trim(line)) ->
+            name = line |> String.trim() |> String.replace(~r/^== (.+) ==$/, "\\1") |> String.downcase()
+            mapped = map_section_name(name)
+            pre_section =
+              case String.trim(Enum.join(Enum.reverse(pre), "\n")) do
+                "" -> []
+                trimmed -> [%{"label" => "memory", "content" => trimmed}]
+              end
+            {pre_section ++ sections, mapped, [], []}
+
+          label != nil and Regex.match?(~r/^== END .+ ==$/, String.trim(line)) ->
+            content = acc |> Enum.reverse() |> Enum.join("\n") |> String.trim()
+            section = %{"label" => label, "content" => content}
+            {[section | sections], nil, [], []}
+
+          label != nil ->
+            {sections, label, [line | acc], pre}
+
+          true ->
+            {sections, nil, [], [line | pre]}
+        end
+      end)
+
+    completed = Enum.reverse(sections)
+
+    trailing =
+      case String.trim(Enum.join(Enum.reverse(current_lines), "\n")) do
+        "" -> []
+        trimmed -> [%{"label" => "metadata", "content" => trimmed}]
+      end
+
+    pre_fallback =
+      if completed == [] do
+        case String.trim(Enum.join(Enum.reverse(pre_lines), "\n")) do
+          "" -> []
+          trimmed -> [%{"label" => "memory", "content" => trimmed}]
+        end
+      else
+        []
+      end
+
+    pre_fallback ++ completed ++ trailing
+  end
+
+  defp map_section_name("interrupts"), do: "interrupts"
+  defp map_section_name("routines"), do: "routines"
+  defp map_section_name("goals"), do: "goals"
+  defp map_section_name("available tools"), do: "tools"
+  defp map_section_name(name), do: name
 
   def thought(content, tokens, tier, cost, tool_call_count, iteration) do
     if enabled?("full") do

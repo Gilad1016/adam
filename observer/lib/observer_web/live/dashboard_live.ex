@@ -1,7 +1,6 @@
 defmodule ObserverWeb.DashboardLive do
   use ObserverWeb, :live_view
 
-  # Left-border accent color per event type
   @border_colors %{
     "tool_call"      => "border-l-blue-500",
     "memory_update"  => "border-l-yellow-500",
@@ -9,9 +8,9 @@ defmodule ObserverWeb.DashboardLive do
     "thought"        => "border-l-purple-500",
     "context"        => "border-l-gray-500",
     "goal_update"    => "border-l-emerald-500",
+    "llm_call"       => "border-l-violet-500",
   }
 
-  # Badge styles per event type
   @type_badges %{
     "tool_call"      => "bg-blue-950 text-blue-300 border-blue-800",
     "memory_update"  => "bg-yellow-950 text-yellow-300 border-yellow-800",
@@ -19,6 +18,7 @@ defmodule ObserverWeb.DashboardLive do
     "thought"        => "bg-purple-950 text-purple-300 border-purple-800",
     "context"        => "bg-gray-800 text-gray-300 border-gray-600",
     "goal_update"    => "bg-emerald-950 text-emerald-300 border-emerald-800",
+    "llm_call"       => "bg-violet-950 text-violet-300 border-violet-800",
   }
 
   @impl true
@@ -41,7 +41,6 @@ defmodule ObserverWeb.DashboardLive do
 
   @impl true
   def handle_info({:new_event, _event}, %{assigns: %{paused: true}} = socket) do
-    # When paused, still store but don't update the visible list
     {:noreply, socket}
   end
 
@@ -74,8 +73,20 @@ defmodule ObserverWeb.DashboardLive do
     {:noreply, assign(socket, events: [], expanded: MapSet.new())}
   end
 
+  @section_badge_colors %{
+    "system_prompt" => "bg-slate-800 text-slate-300 border-slate-600",
+    "memory"        => "bg-teal-950 text-teal-300 border-teal-800",
+    "interrupts"    => "bg-amber-950 text-amber-300 border-amber-800",
+    "routines"      => "bg-sky-950 text-sky-300 border-sky-800",
+    "goals"         => "bg-emerald-950 text-emerald-300 border-emerald-800",
+    "tools"         => "bg-indigo-950 text-indigo-300 border-indigo-800",
+    "metadata"      => "bg-gray-800 text-gray-400 border-gray-600",
+  }
+
   @impl true
   def render(assigns) do
+    assigns = assign(assigns, :section_badge_colors, @section_badge_colors)
+
     ~H"""
     <div class="min-h-screen bg-gray-950 flex flex-col">
 
@@ -127,7 +138,7 @@ defmodule ObserverWeb.DashboardLive do
                 class={"px-3 py-1 text-xs rounded border transition-colors " <> filter_class("all", @filter)}>
           all
         </button>
-        <%= for type <- ~w(tool_call memory_update memory_compact thought context goal_update) do %>
+        <%= for type <- ~w(llm_call tool_call memory_update memory_compact thought context goal_update) do %>
           <button phx-click="set_filter" phx-value-type={type}
                   class={"px-3 py-1 text-xs rounded border transition-colors " <> filter_class(type, @filter)}>
             <%= String.replace(type, "_", " ") %>
@@ -182,9 +193,60 @@ defmodule ObserverWeb.DashboardLive do
 
             <%!-- Expanded detail --%>
             <%= if MapSet.member?(@expanded, id) do %>
-              <div class="border-t border-gray-800 px-4 py-3 bg-gray-950">
-                <pre class="text-xs text-gray-300 overflow-auto max-h-96 whitespace-pre-wrap leading-relaxed"><%= Jason.encode!(event["data"], pretty: true) %></pre>
-              </div>
+              <%= if event["type"] == "llm_call" do %>
+                <% d = event["data"] %>
+                <% sections = d["sections"] || [] %>
+                <div class="border-t border-gray-800 px-4 py-3 bg-gray-950 space-y-3">
+                  <div class="flex items-center gap-2">
+                    <span class={"px-1.5 py-0.5 text-xs rounded shrink-0 " <> tier_badge(d["tier"] || "")}>
+                      <%= d["tier"] || "?" %>
+                    </span>
+                    <span class="text-violet-300 text-xs font-mono">ADAM</span>
+                  </div>
+
+                  <%= if sections != [] do %>
+                    <%= for section <- sections do %>
+                      <% label = section["label"] || "" %>
+                      <% badge_cls = Map.get(@section_badge_colors, label, "bg-gray-800 text-gray-400 border-gray-600") %>
+                      <div class="space-y-1">
+                        <span class={"inline-block px-1.5 py-0.5 text-xs rounded border font-mono " <> badge_cls}>
+                          <%= label %>
+                        </span>
+                        <pre class="text-xs text-gray-300 overflow-auto max-h-48 whitespace-pre-wrap leading-relaxed bg-gray-900 rounded p-2"><%= section["content"] %></pre>
+                      </div>
+                    <% end %>
+                  <% else %>
+                    <div class="space-y-1">
+                      <span class="inline-block px-1.5 py-0.5 text-xs rounded border font-mono bg-slate-800 text-slate-300 border-slate-600">
+                        system_prompt
+                      </span>
+                      <pre class="text-xs text-gray-300 overflow-auto max-h-48 whitespace-pre-wrap leading-relaxed bg-gray-900 rounded p-2"><%= d["system_prompt"] %></pre>
+                    </div>
+                    <div class="space-y-1">
+                      <span class="inline-block px-1.5 py-0.5 text-xs rounded border font-mono bg-gray-800 text-gray-300 border-gray-600">
+                        context
+                      </span>
+                      <pre class="text-xs text-gray-300 overflow-auto max-h-48 whitespace-pre-wrap leading-relaxed bg-gray-900 rounded p-2"><%= d["context"] %></pre>
+                    </div>
+                  <% end %>
+
+                  <div class="space-y-1">
+                    <div class="flex items-center gap-2">
+                      <span class="inline-block px-1.5 py-0.5 text-xs rounded border font-mono bg-purple-950 text-purple-300 border-purple-800">
+                        output
+                      </span>
+                      <span class="text-gray-500 text-xs tabular-nums">
+                        <%= d["tokens"] || 0 %> tok · $<%= Float.round((d["cost"] || 0.0) * 1.0, 4) %>
+                      </span>
+                    </div>
+                    <pre class="text-xs text-gray-300 overflow-auto max-h-64 whitespace-pre-wrap leading-relaxed bg-purple-950/20 rounded p-2"><%= d["thought_content"] %></pre>
+                  </div>
+                </div>
+              <% else %>
+                <div class="border-t border-gray-800 px-4 py-3 bg-gray-950">
+                  <pre class="text-xs text-gray-300 overflow-auto max-h-96 whitespace-pre-wrap leading-relaxed"><%= Jason.encode!(event["data"], pretty: true) %></pre>
+                </div>
+              <% end %>
             <% end %>
           </div>
         <% end %>
@@ -205,8 +267,84 @@ defmodule ObserverWeb.DashboardLive do
 
   # ── Private helpers ───────────────────────────────────────────────────────
 
-  defp visible_events(events, "all"), do: events
-  defp visible_events(events, filter), do: Enum.filter(events, &(&1["type"] == filter))
+  defp visible_events(events, "all"), do: pair_llm_events(events)
+  defp visible_events(events, "llm_call") do
+    events
+    |> Enum.filter(&(&1["type"] in ["context", "thought"]))
+    |> pair_llm_events()
+    |> Enum.filter(&(&1["type"] == "llm_call"))
+  end
+  defp visible_events(events, filter) do
+    events
+    |> Enum.filter(&(&1["type"] == filter))
+    |> pair_llm_events()
+  end
+
+  defp pair_llm_events(events) do
+    context_by_iter =
+      events
+      |> Enum.filter(&(&1["type"] == "context"))
+      |> Enum.into(%{}, fn e -> {e["iteration"], e} end)
+
+    thought_by_iter =
+      events
+      |> Enum.filter(&(&1["type"] == "thought"))
+      |> Enum.into(%{}, fn e -> {e["iteration"], e} end)
+
+    paired_iters =
+      for {iter, _ctx} <- context_by_iter,
+          thought = Map.get(thought_by_iter, iter),
+          thought != nil,
+          into: MapSet.new() do
+        iter
+      end
+
+    llm_calls =
+      for iter <- paired_iters do
+        ctx = context_by_iter[iter]
+        thought = thought_by_iter[iter]
+        d = ctx["data"] || %{}
+        td = thought["data"] || %{}
+        %{
+          "type"      => "llm_call",
+          "ts"        => ctx["ts"],
+          "iteration" => iter,
+          "data"      => %{
+            "tier"           => d["tier"],
+            "agent"          => "ADAM",
+            "sections"       => d["sections"] || [],
+            "context"        => d["context"],
+            "system_prompt"  => d["system_prompt"],
+            "allowed_tools"  => d["allowed_tools"],
+            "context_len"    => d["context_len"],
+            "thought_content" => td["content"],
+            "tokens"         => td["tokens"],
+            "cost"           => td["cost"],
+            "tool_call_count" => td["tool_call_count"],
+          }
+        }
+      end
+
+    llm_call_by_iter = Enum.into(llm_calls, %{}, fn e -> {e["iteration"], e} end)
+
+    events
+    |> Enum.reduce({[], MapSet.new()}, fn event, {acc, seen} ->
+      iter = event["iteration"]
+      type = event["type"]
+      cond do
+        type in ["context", "thought"] and MapSet.member?(paired_iters, iter) ->
+          if MapSet.member?(seen, iter) do
+            {acc, seen}
+          else
+            {[llm_call_by_iter[iter] | acc], MapSet.put(seen, iter)}
+          end
+        true ->
+          {[event | acc], seen}
+      end
+    end)
+    |> elem(0)
+    |> Enum.sort_by(& &1["ts"], :desc)
+  end
 
   defp event_id(event), do: "#{event["ts"]}_#{event["iteration"]}_#{event["type"]}"
 
@@ -214,6 +352,14 @@ defmodule ObserverWeb.DashboardLive do
     ts |> trunc() |> DateTime.from_unix!() |> Calendar.strftime("%H:%M:%S")
   end
   defp format_ts(_), do: "--:--:--"
+
+  defp event_summary(%{"type" => "llm_call", "data" => d}) do
+    tier = d["tier"] || "?"
+    tokens = d["tokens"] || 0
+    cost = d["cost"] || 0.0
+    content = String.slice(to_string(d["thought_content"]), 0, 80)
+    "[#{tier}] ADAM  →  #{content}  [#{tokens} tok, $#{Float.round(cost * 1.0, 4)}]"
+  end
 
   defp event_summary(%{"type" => "tool_call", "data" => d}) do
     name = d["name"] || "?"

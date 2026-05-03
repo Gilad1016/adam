@@ -10,8 +10,17 @@ defmodule ObserverWeb.Router do
     plug :put_secure_browser_headers
   end
 
+  pipeline :api do
+    plug :accepts, ["json"]
+  end
+
   scope "/", ObserverWeb do
     pipe_through :browser
     live "/", DashboardLive
+  end
+
+  scope "/api", ObserverWeb do
+    pipe_through :api
+    get "/events", EventsController, :index
   end
 end
