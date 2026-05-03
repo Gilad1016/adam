@@ -55,7 +55,7 @@ defmodule Adam.Retrospective do
     """
 
     try do
-      result = Adam.LLM.think(prompt, thoughts, [], tier: "thinker")
+      result = Adam.LLM.think(prompt, thoughts, [], tier: "thinker", kind: "infra.retrospective")
       now = DateTime.utc_now() |> Calendar.strftime("%Y-%m-%d")
 
       Adam.Knowledge.write(
