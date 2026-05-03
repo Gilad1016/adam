@@ -255,7 +255,7 @@ defmodule Adam.Narrative do
     end
   end
 
-  defp log_rejection(candidate, reason, kind \\ "drift") do
+  defp log_rejection(candidate, reason, kind) do
     entry = %{
       "ts" => System.os_time(:second),
       "ts_human" => DateTime.utc_now() |> DateTime.to_iso8601(),
