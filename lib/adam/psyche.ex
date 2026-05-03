@@ -686,88 +686,8 @@ defmodule Adam.Psyche do
     end
   end
 
-  defp recall_memories(context, state) do
-    index = Adam.Knowledge.load_index()
-    if index == [], do: "", else: do_recall(context, index, state)
-  end
 
-  defp keyword_scores(context, index) do
-    context_words =
-      context
-      |> String.downcase()
-      |> String.split()
-      |> Enum.filter(&(String.length(&1) > 4))
-      |> MapSet.new()
 
-    Enum.map(index, fn item ->
-      topic_words =
-        (item["topic"] || "")
-        |> String.downcase()
-        |> String.split()
-        |> Enum.filter(&(String.length(&1) > 4))
-        |> MapSet.new()
-
-      tag_words =
-        (item["tags"] || "")
-        |> String.downcase()
-        |> String.split(~r/[;,\s]/)
-        |> MapSet.new()
-
-      all_words = MapSet.union(topic_words, tag_words)
-      overlap = MapSet.intersection(context_words, all_words) |> MapSet.size()
-      {overlap * 1.0, item}
-    end)
-  end
-
-  defp do_recall(context, index, state) do
-    now = System.os_time(:second)
-    vh = as_list(state["valence_history"])
-    valence_by_id =
-      vh
-      |> Enum.filter(&(is_map(&1) and &1["id"]))
-      |> Map.new(fn v -> {v["id"], v["composite"] || 0} end)
-
-    # Attempt vector-based scoring via embeddings; fall back to keyword scoring.
-    base_scores =
-      case Adam.Embeddings.recall(context, index) do
-        {:error, _} -> keyword_scores(context, index)
-        vector_scores when is_list(vector_scores) -> vector_scores
-      end
-
-    scored =
-      Enum.map(base_scores, fn {base_score, item} ->
-        entry_id = item["id"] || ""
-        score = base_score + (valence_by_id[entry_id] || 0) * 2.0
-
-        created = item["updated"] || item["created"] || 0
-        created = if is_integer(created), do: created, else: 0
-        age_days = (now - created) / 86400
-        recency = max(0.0, 1.0 - age_days / 7.0)
-        score = score + recency * 0.5
-
-        {score, item}
-      end)
-      |> Enum.filter(fn {score, _} -> score > 0 end)
-      |> Enum.sort_by(fn {score, _} -> score end, :desc)
-      |> Enum.take(5)
-
-    if scored == [] do
-      ""
-    else
-      lines = ["== SURFACED MEMORIES =="]
-
-      lines =
-        lines ++
-          Enum.map(scored, fn {_, item} ->
-            tags = item["tags"] || "none"
-            summary = String.slice(item["topic"] || "", 0, 120)
-            "- [#{item["id"]}] #{summary} (tags: #{tags})"
-          end)
-
-      lines = lines ++ ["== END MEMORIES =="]
-      Enum.join(lines, "\n")
-    end
-  end
 
   # ---------------------------------------------------------------------------
   # TIME SENSE
@@ -810,65 +730,6 @@ defmodule Adam.Psyche do
     save(state)
   end
 
-  defp time_sense_to_text(state) do
-    ts = state["time_sense"] || %{}
-    now = System.os_time(:second)
-    lines = []
-
-    last_sent = ts["last_email_sent"] || 0
-    lines =
-      if last_sent > 0 do
-        hours_ago = (now - last_sent) / 3600
-        if hours_ago < 1 do
-          lines ++ ["You emailed your owner #{div(now - last_sent, 60)} minutes ago."]
-        else
-          lines ++ ["You emailed your owner #{Float.round(hours_ago, 1)} hours ago."]
-        end
-      else
-        lines
-      end
-
-    last_received = ts["last_email_received"] || 0
-    lines =
-      if last_received > 0 do
-        hours_ago = (now - last_received) / 3600
-        if hours_ago < 1 do
-          lines ++ ["Your owner emailed you #{div(now - last_received, 60)} minutes ago."]
-        else
-          lines ++ ["Your owner last emailed you #{Float.round(hours_ago, 1)} hours ago."]
-        end
-      else
-        lines
-      end
-
-    stamps = as_list(ts["iteration_timestamps"])
-    lines =
-      if length(stamps) >= 2 do
-        window_sec = List.last(stamps) - hd(stamps)
-        if window_sec > 0 do
-          tpm = length(stamps) / (window_sec / 60)
-          lines ++ ["You're thinking about #{Float.round(tpm, 1)} thoughts per minute."]
-        else
-          lines
-        end
-      else
-        lines
-      end
-
-    stage_entered = state["stage_entered"] || now
-    stage_entered = if is_number(stage_entered), do: stage_entered, else: now
-    stage_days = (now - stage_entered) / 86400
-
-    lines =
-      if stage_days < 1 do
-        stage_hours = stage_days * 24
-        lines ++ ["You've been in your current stage for #{Float.round(stage_hours, 1)} hours."]
-      else
-        lines ++ ["You've been in your current stage for #{Float.round(stage_days, 1)} days."]
-      end
-
-    Enum.join(lines, "\n")
-  end
 
   # ---------------------------------------------------------------------------
   # DEVELOPMENTAL STAGE TRACKER
@@ -1018,10 +879,6 @@ defmodule Adam.Psyche do
     end
   end
 
-  defp self_model_to_text(state) do
-    summary = get_in_state(state, ["self_model", "summary"]) || ""
-    if summary == "", do: "", else: "== SELF ==\n#{summary}\n== END SELF =="
-  end
 
   defp track_owner_interaction(_msg) do
     state = get_state()
@@ -1055,9 +912,6 @@ defmodule Adam.Psyche do
     save(state)
   end
 
-  defp owner_model_to_text(state) do
-    get_in_state(state, ["self_model", "owner_summary"]) || ""
-  end
 
   # ---------------------------------------------------------------------------
   # THOUGHT LOG HELPERS (read-only — compaction.ex owns writes)
@@ -1128,17 +982,6 @@ defmodule Adam.Psyche do
     state["anchors"] || %{}
   end
 
-  defp anchors_to_text(state) do
-    anchors = state["anchors"] || %{}
-    if map_size(anchors) == 0 do
-      ""
-    else
-      lines = ["== ANCHORS (invariants — never drop these) =="]
-      lines = lines ++ Enum.map(anchors, fn {k, v} -> "- #{k}: #{v["value"]}" end)
-      lines = lines ++ ["== END ANCHORS =="]
-      Enum.join(lines, "\n")
-    end
-  end
 
   # ---------------------------------------------------------------------------
   # SELF-CRITIQUE — behavioral rules generated from failure streaks
@@ -1225,17 +1068,6 @@ defmodule Adam.Psyche do
     end
   end
 
-  defp behavioral_rules_to_text(state) do
-    rules = as_list(state["behavioral_rules"])
-    if rules == [] do
-      ""
-    else
-      lines = ["== BEHAVIORAL RULES (learned from failures) =="]
-      lines = lines ++ Enum.map(rules, &("- #{&1}"))
-      lines = lines ++ ["== END BEHAVIORAL RULES =="]
-      Enum.join(lines, "\n")
-    end
-  end
 
   # ---------------------------------------------------------------------------
   # HELPERS
