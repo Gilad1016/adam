@@ -13,6 +13,14 @@ defmodule Adam.Compaction do
     end
   end
 
+  @doc "Force a compaction pass regardless of entry count (used by deep consolidation)."
+  def compact do
+    if File.exists?(@thought_log) do
+      entries = load_entries()
+      if entries != [], do: compact(entries)
+    end
+  end
+
   defp compact(entries) do
     {old, recent} = Enum.split(entries, length(entries) - 20)
     summary = summarize(old)
@@ -68,7 +76,7 @@ defmodule Adam.Compaction do
     save_entries(entries)
   end
 
-  defp load_entries do
+  def load_entries do
     if File.exists?(@thought_log) do
       content = File.read!(@thought_log)
       if String.trim(content) == "" do

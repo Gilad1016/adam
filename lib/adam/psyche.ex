@@ -14,6 +14,12 @@ defmodule Adam.Psyche do
     4 => MapSet.new(~w(sandbox_service_start sandbox_service_stop sandbox_services sandbox_log))
   }
 
+  # Tiredness: threshold by developmental stage to trigger deep consolidation
+  @consolidation_thresholds %{0 => 0.4, 1 => 0.5, 2 => 0.6, 3 => 0.7, 4 => 0.8}
+
+  # Maximum hourly budget spend used to normalise the budget_rate component
+  @max_hourly_budget Application.compile_env(:adam, :max_hourly_budget, 5.0)
+
   @stage_min_hours %{0 => 24, 1 => 48, 2 => 72, 3 => 168, 4 => 0}
   @stage_names %{0 => "Newborn", 1 => "Infant", 2 => "Child", 3 => "Adolescent", 4 => "Adult"}
 
@@ -33,6 +39,14 @@ defmodule Adam.Psyche do
       else
         default_state()
       end
+
+    # Ensure tiredness fields are present for agents upgrading from older state files
+    now = System.os_time(:second)
+    state =
+      state
+      |> Map.put_new("started_at", now)
+      |> Map.put_new("tiredness_accumulator", 0.0)
+      |> Map.put_new("last_consolidation_time", 0)
 
     save(state)
   end
@@ -109,6 +123,11 @@ defmodule Adam.Psyche do
     update_drives(thought, tool_results)
     update_time_sense(new_len, tool_results)
     emit_maturity_signals()
+
+    # Tiredness-driven deep consolidation (replaces/augments fixed-interval compaction)
+    if should_consolidate?() do
+      consolidate()
+    end
   end
 
   def process_owner_email(msg) do
@@ -154,6 +173,149 @@ defmodule Adam.Psyche do
 
   def get_stage, do: (get_state()["stage"] || 0)
   def get_stage_name, do: @stage_names[get_stage()]
+
+  # ---------------------------------------------------------------------------
+  # TIREDNESS & DEEP CONSOLIDATION
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Compute current tiredness in [0.0, 1.0].
+
+  tiredness = budget_rate_weight * (1 / max(valence_density, 0.01))
+
+  budget_rate_weight = clamp(total_spent / hours_since_start / max_hourly_budget)
+  valence_density    = count(composite > 0.5 in last 20 iterations) / 20.0
+  """
+  def compute_tiredness do
+    try do
+      budget = Adam.Safety.load_budget()
+      total_spent = budget["total_spent"] || 0.0
+      last_deduction = budget["last_deduction"] || System.os_time(:second)
+
+      state = get_state()
+      started_at = state["started_at"] || last_deduction
+      now = System.os_time(:second)
+
+      seconds_since_start = max(now - started_at, 1)
+      hours_since_start = seconds_since_start / 3600.0
+
+      budget_rate = total_spent / hours_since_start
+      budget_rate_weight = clamp(budget_rate / max(@max_hourly_budget, 0.01))
+
+      vh = as_list(state["valence_history"])
+      recent_20 = Enum.take(vh, -20)
+      high_valence_count = Enum.count(recent_20, fn e ->
+        is_map(e) and (e["composite"] || 0) > 0.5
+      end)
+      valence_density = high_valence_count / 20.0
+
+      tiredness = budget_rate_weight * (1.0 / max(valence_density, 0.01))
+      clamp(tiredness)
+    rescue
+      _ -> 0.0
+    end
+  end
+
+  @doc """
+  Returns true when tiredness exceeds the threshold for the current stage.
+  """
+  def should_consolidate? do
+    stage = get_stage()
+    threshold = @consolidation_thresholds[stage] || 0.8
+    compute_tiredness() >= threshold
+  end
+
+  @doc """
+  Deep consolidation pass:
+  1. Call the deep LLM model to synthesise actionable insights from recent thoughts.
+  2. Write those insights to the knowledge base (tagged auto-encoded + consolidation).
+  3. Run normal compaction to compress raw experiences.
+  4. Reset last_consolidation_time in psyche state.
+
+  On deep-model failure: logs error and still runs compaction. Never raises.
+  """
+  def consolidate do
+    IO.puts("[TIREDNESS] Consolidation triggered (tiredness=#{Float.round(compute_tiredness(), 3)})")
+
+    # 1. Gather recent thought log for synthesis
+    thought_summary =
+      try do
+        entries = Adam.Compaction.load_entries()
+        thoughts =
+          entries
+          |> Enum.take(-40)
+          |> Enum.map(fn e -> e["thought"] || "" end)
+          |> Enum.reject(&(&1 == ""))
+          |> Enum.join("\n---\n")
+          |> String.slice(0, 4000)
+
+        state = get_state()
+        stage_name = @stage_names[state["stage"] || 0]
+        vh = as_list(state["valence_history"])
+        recent = Enum.take(vh, -20)
+        avg_composite = if recent == [], do: 0.0,
+          else: Enum.reduce(recent, 0.0, fn e, a -> a + (if is_map(e), do: e["composite"] || 0, else: 0) end) / length(recent)
+
+        context = """
+        ## Recent Thoughts (last ~40 iterations)
+        #{thoughts}
+
+        ## Context
+        - Developmental stage: #{stage_name}
+        - Average valence (last 20): #{Float.round(avg_composite, 3)}
+        - Tiredness: #{Float.round(compute_tiredness(), 3)}
+        """
+
+        prompt = """
+        You are ADAM reflecting on your recent experiences during a deep consolidation pass.
+        Synthesise what you have learned into 3-7 concise, actionable insights.
+        Focus on: patterns you noticed, mistakes to avoid, effective strategies, open questions.
+        Format each insight as a bullet point starting with a verb (e.g. "Prefer X when Y").
+        """
+
+        result = Adam.LLM.think(prompt, context, [], tier: "deep")
+
+        if String.starts_with?(result.content, "[LLM ERROR") do
+          IO.puts("[TIREDNESS] Deep model call failed: #{result.content}")
+          nil
+        else
+          result.content
+        end
+      rescue
+        e ->
+          IO.puts("[TIREDNESS] Exception during deep synthesis: #{Exception.message(e)}")
+          nil
+      end
+
+    # 2. Write insights to knowledge base (if we got any)
+    if thought_summary != nil do
+      try do
+        now = DateTime.utc_now() |> Calendar.strftime("%Y-%m-%d %H:%M")
+        Adam.Knowledge.write("consolidation #{now}", thought_summary, ["auto-encoded", "consolidation"])
+        IO.puts("[TIREDNESS] Consolidation insights written to knowledge base")
+      rescue
+        e -> IO.puts("[TIREDNESS] Failed to write consolidation insights: #{Exception.message(e)}")
+      end
+    end
+
+    # 3. Run compaction regardless of deep pass success (force-compact, not threshold-gated)
+    try do
+      Adam.Compaction.compact()
+    rescue
+      e -> IO.puts("[TIREDNESS] Compaction error during consolidation: #{Exception.message(e)}")
+    end
+
+    # 4. Reset consolidation timer
+    try do
+      state = get_state()
+      state = Map.put(state, "last_consolidation_time", System.os_time(:second))
+      save(state)
+    rescue
+      _ -> :ok
+    end
+
+    :ok
+  end
 
   # ---------------------------------------------------------------------------
   # DRIVE SYSTEM
@@ -256,6 +418,13 @@ defmodule Adam.Psyche do
       social > 0.6 -> "You feel an urge to check in with your owner."
       social > 0.3 -> "You're aware of your owner in the background."
       true -> "You feel focused and self-directed."
+    end]
+
+    tiredness = compute_tiredness()
+    lines = lines ++ [cond do
+      tiredness > 0.7 -> "You feel mentally exhausted. Consolidation is due."
+      tiredness > 0.4 -> "You feel the weight of recent experiences accumulating."
+      true -> "You feel alert and present."
     end]
 
     Enum.join(lines, "\n")
@@ -397,7 +566,7 @@ defmodule Adam.Psyche do
     if index == [], do: "", else: do_recall(context, index, state)
   end
 
-  defp do_recall(context, index, state) do
+  defp keyword_scores(context, index) do
     context_words =
       context
       |> String.downcase()
@@ -405,6 +574,27 @@ defmodule Adam.Psyche do
       |> Enum.filter(&(String.length(&1) > 4))
       |> MapSet.new()
 
+    Enum.map(index, fn item ->
+      topic_words =
+        (item["topic"] || "")
+        |> String.downcase()
+        |> String.split()
+        |> Enum.filter(&(String.length(&1) > 4))
+        |> MapSet.new()
+
+      tag_words =
+        (item["tags"] || "")
+        |> String.downcase()
+        |> String.split(~r/[;,\s]/)
+        |> MapSet.new()
+
+      all_words = MapSet.union(topic_words, tag_words)
+      overlap = MapSet.intersection(context_words, all_words) |> MapSet.size()
+      {overlap * 1.0, item}
+    end)
+  end
+
+  defp do_recall(context, index, state) do
     now = System.os_time(:second)
     vh = as_list(state["valence_history"])
     valence_by_id =
@@ -412,17 +602,17 @@ defmodule Adam.Psyche do
       |> Enum.filter(&(is_map(&1) and &1["id"]))
       |> Map.new(fn v -> {v["id"], v["composite"] || 0} end)
 
+    # Attempt vector-based scoring via embeddings; fall back to keyword scoring.
+    base_scores =
+      case Adam.Embeddings.recall(context, index) do
+        {:error, _} -> keyword_scores(context, index)
+        vector_scores when is_list(vector_scores) -> vector_scores
+      end
+
     scored =
-      Enum.map(index, fn item ->
-        topic_words = (item["topic"] || "") |> String.downcase() |> String.split() |> Enum.filter(&(String.length(&1) > 4)) |> MapSet.new()
-        tag_words = (item["tags"] || "") |> String.downcase() |> String.split(~r/[;,\s]/) |> MapSet.new()
-        all_words = MapSet.union(topic_words, tag_words)
-
-        keyword_overlap = MapSet.intersection(context_words, all_words) |> MapSet.size()
-        score = keyword_overlap * 1.0
-
+      Enum.map(base_scores, fn {base_score, item} ->
         entry_id = item["id"] || ""
-        score = score + (valence_by_id[entry_id] || 0) * 2.0
+        score = base_score + (valence_by_id[entry_id] || 0) * 2.0
 
         created = item["updated"] || item["created"] || 0
         created = if is_integer(created), do: created, else: 0
@@ -739,9 +929,13 @@ defmodule Adam.Psyche do
   # ---------------------------------------------------------------------------
 
   defp default_state do
+    now = System.os_time(:second)
     %{
       "stage" => 0,
-      "stage_entered" => System.os_time(:second),
+      "stage_entered" => now,
+      "started_at" => now,
+      "tiredness_accumulator" => 0.0,
+      "last_consolidation_time" => 0,
       "drives" => %{
         "energy" => 1.0,
         "curiosity" => 0.5,

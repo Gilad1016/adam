@@ -27,6 +27,10 @@ defmodule Adam.Knowledge do
     index_entry = %{"id" => id, "topic" => topic, "tags" => Enum.join(tags, ";"), "updated" => now}
     save_index([index_entry | index])
 
+    # Generate and persist a vector embedding for this entry (best-effort).
+    embed_text = "#{topic} #{content}"
+    Task.start(fn -> Adam.Embeddings.embed_and_store(id, embed_text) end)
+
     "stored knowledge '#{topic}' (id: #{id})"
   end
 
