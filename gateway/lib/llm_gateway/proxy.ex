@@ -31,7 +31,9 @@ defmodule LlmGateway.Proxy do
             url: upstream,
             headers: headers,
             body: body,
-            receive_timeout: 120_000,
+            # Local Ollama calls with seed-prefixed context can take several minutes
+            # on cold model load or deep consolidation; must be >= ADAM's own timeout.
+            receive_timeout: 600_000,
             decode_body: false,
             retry: false
           )
