@@ -25,7 +25,7 @@ defmodule LlmGateway.MixProject do
   defp deps do
     [
       {:phoenix, "~> 1.7.14"},
-      {:phoenix_live_view, "~> 0.20"},
+      {:phoenix_live_view, "~> 1.0"},
       {:phoenix_html, "~> 4.1"},
       {:phoenix_pubsub, "~> 2.1"},
       {:ecto_sql, "~> 3.12"},
