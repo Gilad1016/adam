@@ -74,6 +74,23 @@ defmodule LlmGateway.Admin do
     end
   end
 
+  @doc "Read the narrative rejection log for operator review. Newest first."
+  def narrative_rejections do
+    path = Path.join(memory_dir(), "narrative_rejections.toon")
+
+    case File.read(path) do
+      {:ok, c} ->
+        case Jason.decode(c) do
+          {:ok, %{"entries" => l}} when is_list(l) -> Enum.reverse(l)
+          {:ok, l} when is_list(l) -> Enum.reverse(l)
+          _ -> []
+        end
+
+      _ ->
+        []
+    end
+  end
+
   def wipe_memory, do: wipe_dir(memory_dir())
   def wipe_knowledge, do: wipe_dir(knowledge_dir())
   def wipe_checkpoints, do: wipe_dir(checkpoints_dir())
