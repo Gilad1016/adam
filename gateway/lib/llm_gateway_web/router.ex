@@ -13,6 +13,7 @@ defmodule LlmGatewayWeb.Router do
   scope "/" do
     pipe_through :browser
     live "/", LlmGatewayWeb.CallsLive, :index
+    live "/stats", LlmGatewayWeb.StatsLive, :index
     live "/admin", LlmGatewayWeb.AdminLive, :index
     live "/system", LlmGatewayWeb.SystemLive, :index
   end
