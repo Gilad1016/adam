@@ -39,12 +39,23 @@ defmodule Adam.Tools do
   def execute("consult", _),
     do: "[CONSULT ERROR] requires \"peer\" (one of: skeptic, planner, historian) and \"message\""
 
+  def execute("tool_history", %{"name" => name}) when is_binary(name) do
+    Adam.ToolStats.get_history(name)
+  end
+
+  def execute("tool_history", _), do: "[ERROR: tool_history requires 'name']"
+
   def execute(name, _), do: "[ERROR: unknown tool '#{name}']"
+
+  @pain_keywords ~w(error failed timeout exception rejected crash corrupt)
 
   def execute_tool_calls(tool_calls) do
     Enum.map(tool_calls, fn %{name: name, arguments: args} ->
       result = execute(name, args)
-      %{name: name, result: to_string(result)}
+      result_str = to_string(result)
+      success? = not Enum.any?(@pain_keywords, &String.contains?(String.downcase(result_str), &1))
+      Adam.ToolStats.record_call(name, args, result_str, success?)
+      %{name: name, result: result_str}
     end)
   end
 
@@ -58,15 +69,30 @@ defmodule Adam.Tools do
       allowed == nil or MapSet.member?(allowed, tool.name)
     end)
     |> Enum.map(fn tool ->
+      desc = append_stats(tool.name, tool.description)
+
       %{
         "type" => "function",
         "function" => %{
           "name" => tool.name,
-          "description" => tool.description,
+          "description" => desc,
           "parameters" => tool.parameters
         }
       }
     end)
+  end
+
+  defp append_stats(tool_name, description) do
+    case Adam.ToolStats.get_summary(tool_name) do
+      %{total: t, successes: s, failures: f} when t > 0 ->
+        rate = trunc(s / t * 100)
+        "#{description} [used #{t}x, #{rate}% success, #{f} failures]"
+
+      _ ->
+        description
+    end
+  catch
+    :exit, _ -> description
   end
 
   def get_tools_summary(allowed \\ nil) do
@@ -125,7 +151,8 @@ defmodule Adam.Tools do
           },
           "required" => ["peer", "message"]
         }
-      }
+      },
+      %{name: "tool_history", description: "View your past usage of any tool — shows recent calls with args, results, and success/failure", parameters: %{"type" => "object", "properties" => %{"name" => %{"type" => "string", "description" => "Tool name to inspect"}}, "required" => ["name"]}}
     ]
   end
 
@@ -193,6 +220,7 @@ defmodule Adam.Tools do
     try do
       Code.string_to_quoted!(wrapper)
       File.write!(path, wrapper)
+      Adam.ToolStats.invalidate(name)
       "created tool '#{name}' at tools/#{name}.exs"
     rescue
       e -> "[SYNTAX ERROR: #{Exception.message(e)}]"

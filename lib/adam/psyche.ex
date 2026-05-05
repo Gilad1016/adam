@@ -11,7 +11,7 @@ defmodule Adam.Psyche do
   @stage_tools %{
     0 => MapSet.new(~w(read_file write_file shell wait)),
     1 => MapSet.new(~w(sandbox_run sandbox_install sandbox_project)),
-    2 => MapSet.new(~w(web_search web_read write_knowledge search_knowledge list_knowledge update_knowledge read_knowledge consult)),
+    2 => MapSet.new(~w(web_search web_read write_knowledge search_knowledge list_knowledge update_knowledge read_knowledge consult tool_history)),
     3 => MapSet.new(~w(create_tool modify_prompt send_email escalate set_alarm remove_alarm list_alarms schedule_add schedule_remove schedule_list)),
     4 => MapSet.new(~w(sandbox_service_start sandbox_service_stop sandbox_services sandbox_log))
   }
