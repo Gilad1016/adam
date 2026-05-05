@@ -8,7 +8,8 @@ defmodule Adam.Curator.Supervisor do
   def init(_opts) do
     children = [
       Adam.Curator.Autopush,
-      Adam.Curator.Curate
+      Adam.Curator.Curate,
+      Adam.Curator.ToolCuration
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
