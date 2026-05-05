@@ -32,7 +32,8 @@ defmodule Adam.Loop do
       case load_persisted_state() do
         %{iteration: i, messages: m} ->
           IO.puts("[LOOP] resumed from persisted state: iter=#{i}, msgs=#{length(m)}")
-          %{iteration: i, messages: m, last_checkpoint: System.os_time(:second)}
+          marker = %{role: "user", content: "[SYSTEM: Container restarted. Previous context restored. Continue from where you left off — do not re-orient or summarize what happened.]"}
+          %{iteration: i, messages: m ++ [marker], last_checkpoint: System.os_time(:second)}
 
         nil ->
           %{iteration: 0, messages: [], last_checkpoint: System.os_time(:second)}
