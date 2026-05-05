@@ -8,6 +8,7 @@ defmodule Adam do
 
     children = [
       {Task.Supervisor, name: Adam.TaskSupervisor},
+      Adam.ToolStats,
       Adam.Psyche,
       Adam.Interrupts,
       Adam.Loop,
